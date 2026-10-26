@@ -1,0 +1,127 @@
+{
+  "name": "originx-extension",
+  "displayName": "ORIGINX: Code History Explainer",
+  "description": "Understand why code changed by inspecting Git history and Copilot AI explanations",
+  "version": "0.2.0",
+  "publisher": "originx",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "ORIGINX",
+      "properties": {
+        "originx.enableAutomaticAnalysis": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically send selected code and Git diffs to GitHub Copilot for AI analysis on right-click without per-request confirmation."
+        },
+        "originx.promptVariant": {
+          "type": "string",
+          "enum": [
+            "compact",
+            "standard"
+          ],
+          "default": "compact",
+          "description": "Prompt variant sent to the model: 'compact' optimizes for minimal token usage under 350 tokens; 'standard' uses the full prompt template."
+        },
+        "originx.showMultiFileConfirmation": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a usage and token estimation confirmation dialog before analyzing multiple files."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "originx.whyWasThisChanged",
+        "title": "ORIGINX: Why Was This Changed?"
+      },
+      {
+        "command": "originx.whyWereTheseChanged",
+        "title": "ORIGINX: Why Were These Changed?"
+      },
+      {
+        "command": "originx.commandCenter",
+        "title": "ORIGINX: Command Center"
+      },
+      {
+        "command": "originx.enableAutomaticAnalysis",
+        "title": "ORIGINX: Enable Automatic AI Analysis"
+      },
+      {
+        "command": "originx.disableAutomaticAnalysis",
+        "title": "ORIGINX: Disable Automatic AI Analysis"
+      },
+      {
+        "command": "originx.listVsCodeModels",
+        "title": "ORIGINX: List Available AI Models"
+      },
+      {
+        "command": "originx.inspectPayload",
+        "title": "ORIGINX: Inspect Outgoing AI Payload"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "originx.whyWasThisChanged",
+          "when": "editorTextFocus",
+          "group": "originx_group@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "originx.whyWereTheseChanged",
+          "group": "originx_group@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "originx.whyWereTheseChanged",
+          "when": "false"
+        },
+        {
+          "command": "originx.enableAutomaticAnalysis",
+          "when": "false"
+        },
+        {
+          "command": "originx.disableAutomaticAnalysis",
+          "when": "false"
+        },
+        {
+          "command": "originx.listVsCodeModels",
+          "when": "false"
+        },
+        {
+          "command": "originx.inspectPayload",
+          "when": "false"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "originx.whyWasThisChanged",
+        "key": "ctrl+alt+h",
+        "mac": "cmd+alt+h",
+        "when": "editorTextFocus && editorHasSelection"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node ./out/test/runTests.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3"
+  }
+}
