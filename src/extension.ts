@@ -5,7 +5,9 @@ import { getHistoryForSelection } from './git/gitService';
 import { SelectionContext } from './git/gitTypes';
 import { getAvailableVsCodeModels } from './lm/vscodeLmClient';
 import { estimateMultiFileTokens, promptMultiFileUsageConfirmation } from './multiFile/multiFileConfirmation';
+import { MultiFileExplainer } from './multiFile/multiFileExplainer';
 import { gatherMultiFileGitEvidence } from './multiFile/multiFileService';
+import { MultiFileHistoryResult } from './multiFile/multiFileTypes';
 import { validateMultiFileSelection } from './multiFile/multiFileValidator';
 import { migrateAndPurgeLegacySecrets } from './security/secretManager';
 import { showCommandCenter } from './ui/commandCenter';
@@ -427,6 +429,15 @@ export function activate(context: vscode.ExtensionContext) {
                 .get<boolean>('enableAutomaticAnalysis', false);
 
               if (!isAutoEnabled) {
+                const disabledHistoryResult: MultiFileHistoryResult = {
+                  totalReceived: validation.totalReceived,
+                  eligibleFiles: validation.eligibleFiles,
+                  excludedFiles: validation.excludedFiles,
+                  isMixedRepositories: validation.isMixedRepositories,
+                  evidence,
+                  tokenEstimate,
+                  explanationStatus: 'disabled'
+                };
                 OutputView.showMultiFileSummary({
                   totalReceived: validation.totalReceived,
                   eligibleFiles: validation.eligibleFiles,
@@ -436,13 +447,14 @@ export function activate(context: vscode.ExtensionContext) {
                   tokenEstimate,
                   status: 'Git evidence gathered (AI analysis disabled by default)'
                 });
+                WebviewView.showMultiFileResult(disabledHistoryResult, context.extensionUri);
                 vscode.window.showInformationMessage(
                   `ORIGINX: Gathered Git history for ${evidence.files.length} file(s). Automatic AI Analysis is disabled by default. Enable it in Command Center to run AI synthesis.`
                 );
                 return;
               }
 
-              // 5. Usage Confirmation Dialog (shows file count, model, estimated tokens, warnings)
+              // 5. Usage Confirmation Webview Panel (shows file count, model, estimated tokens, real checkbox)
               const confirmation = await promptMultiFileUsageConfirmation(
                 evidence.files,
                 tokenEstimate,
@@ -451,6 +463,15 @@ export function activate(context: vscode.ExtensionContext) {
               );
 
               if (!confirmation.confirmed || confirmation.action === 'cancel') {
+                const cancelledHistoryResult: MultiFileHistoryResult = {
+                  totalReceived: validation.totalReceived,
+                  eligibleFiles: validation.eligibleFiles,
+                  excludedFiles: validation.excludedFiles,
+                  isMixedRepositories: validation.isMixedRepositories,
+                  evidence,
+                  tokenEstimate,
+                  explanationStatus: 'cancelled'
+                };
                 OutputView.showMultiFileSummary({
                   totalReceived: validation.totalReceived,
                   eligibleFiles: validation.eligibleFiles,
@@ -460,10 +481,31 @@ export function activate(context: vscode.ExtensionContext) {
                   tokenEstimate,
                   status: 'Cancelled by user at usage confirmation'
                 });
+                WebviewView.showMultiFileResult(cancelledHistoryResult, context.extensionUri);
                 return;
               }
 
-              // 6. Phase 4B.1 milestone completion
+              // 6. Invoke Copilot LM to generate the synthesized cross-file explanation (Phase 4B.2)
+              const multiExplainer = new MultiFileExplainer();
+              const explainResult = await multiExplainer.explainMultiFileChanges(evidence.files, {
+                cancellationToken: token,
+                lmModelInstance: activeModel
+              });
+
+              const multiHistoryResult: MultiFileHistoryResult = {
+                totalReceived: validation.totalReceived,
+                eligibleFiles: validation.eligibleFiles,
+                excludedFiles: validation.excludedFiles,
+                isMixedRepositories: validation.isMixedRepositories,
+                evidence,
+                tokenEstimate,
+                explanationStatus: explainResult.status,
+                explanation: explainResult.explanation,
+                explanationError: explainResult.error,
+                explanationDiagnostics: explainResult.diagnostics
+              };
+
+              // 7. Update Output Channel and Webview
               OutputView.showMultiFileSummary({
                 totalReceived: validation.totalReceived,
                 eligibleFiles: validation.eligibleFiles,
@@ -471,12 +513,35 @@ export function activate(context: vscode.ExtensionContext) {
                 isMixedRepositories: validation.isMixedRepositories,
                 evidence,
                 tokenEstimate,
-                status: 'Phase 4B.1 Verified: Ready for Phase 4B.2 cross-file AI synthesis'
+                explanation: explainResult.explanation,
+                status: explainResult.status === 'ok'
+                  ? `Completed: ${evidence.files.length} file(s) analyzed with Copilot LM`
+                  : `Status: ${explainResult.status} - ${explainResult.error || 'See Output Channel / Webview'}`
               });
 
-              vscode.window.showInformationMessage(
-                `ORIGINX: Verified multi-file analysis for ${evidence.files.length} file(s) (~${tokenEstimate.estimatedTokens.toLocaleString()} tokens). Ready for Phase 4B.2 synthesis.`
-              );
+              WebviewView.showMultiFileResult(multiHistoryResult, context.extensionUri);
+
+              if (explainResult.status === 'blocked_security') {
+                vscode.window.showErrorMessage(
+                  `ORIGINX Security Block: ${explainResult.error}`
+                );
+              } else if (explainResult.status === 'no_model') {
+                vscode.window.showWarningMessage(
+                  'ORIGINX: No language models available via VS Code Language Model API. Ensure GitHub Copilot is installed and active.'
+                );
+              } else if (explainResult.status === 'failed') {
+                const diagSummary = explainResult.diagnostics
+                  ? ` [Category: ${explainResult.diagnostics.category}, Duration: ${(explainResult.diagnostics.durationMs / 1000).toFixed(1)}s]`
+                  : '';
+                vscode.window.showWarningMessage(
+                  `ORIGINX AI Error: ${explainResult.error}${diagSummary}. Local Git history preserved.`
+                );
+              } else if (explainResult.status === 'ok') {
+                vscode.window.setStatusBarMessage(
+                  `ORIGINX: Cross-file explanation generated for ${evidence.files.length} file(s) via Copilot LM`,
+                  4000
+                );
+              }
             } catch (error) {
               const errMsg = error instanceof Error ? error.message : String(error);
               vscode.window.showErrorMessage(`ORIGINX Multi-File Error: ${errMsg}`);

@@ -1,5 +1,6 @@
 import type * as vscode from 'vscode';
 import { CommitInfo } from '../git/gitTypes';
+import { RequestDiagnostics } from '../gemini/geminiTypes';
 import { ILanguageModelChat } from '../lm/vscodeLmClient';
 
 export interface FileValidationItem {
@@ -53,4 +54,32 @@ export interface MultiFileConfirmationResult {
   confirmed: boolean;
   dontShowAgain: boolean;
   action: 'analyze' | 'cancel' | 'dismissed';
+}
+
+export interface PerFileExplanation {
+  fileName: string;
+  filePath: string;
+  whatChanged: string;
+  possibleReasons: string;
+}
+
+export interface MultiFileExplanation {
+  crossFileSummary: string;
+  perFileSummaries: PerFileExplanation[];
+  supportingCommits: string;
+  uncertainty: string;
+  model: string;
+}
+
+export interface MultiFileHistoryResult {
+  totalReceived: number;
+  eligibleFiles: FileValidationItem[];
+  excludedFiles: FileValidationItem[];
+  isMixedRepositories: boolean;
+  evidence: MultiFileEvidenceResult;
+  tokenEstimate: TokenEstimationResult;
+  explanationStatus: 'ok' | 'disabled' | 'blocked_security' | 'no_model' | 'failed' | 'cancelled';
+  explanation?: MultiFileExplanation;
+  explanationError?: string;
+  explanationDiagnostics?: RequestDiagnostics;
 }

@@ -229,6 +229,12 @@ export class OutputView {
       modelIdentifier: string;
       maxInputTokens?: number;
     };
+    explanation?: {
+      crossFileSummary: string;
+      perFileSummaries: Array<{ fileName: string; whatChanged: string; possibleReasons: string }>;
+      supportingCommits: string;
+      uncertainty: string;
+    };
     status: string;
   }): void {
     const channel = this.getChannel();
@@ -297,6 +303,38 @@ export class OutputView {
       if (info.tokenEstimate.maxInputTokens) {
         channel.appendLine(`Context Window:   ${info.tokenEstimate.maxInputTokens.toLocaleString()} tokens`);
       }
+      channel.appendLine(separator);
+      channel.appendLine('');
+    }
+
+    if (info.explanation) {
+      channel.appendLine(separator);
+      channel.appendLine('  ORIGINX MULTI-FILE AI EXPLANATION [VS Code Copilot LM]');
+      channel.appendLine(separator);
+      channel.appendLine('');
+
+      channel.appendLine('[CROSS-FILE RELATIONSHIP & SUMMARY]');
+      channel.appendLine(subSeparator);
+      channel.appendLine(info.explanation.crossFileSummary);
+      channel.appendLine('');
+
+      channel.appendLine('[PER-FILE SUMMARIES]');
+      channel.appendLine(subSeparator);
+      for (const p of info.explanation.perFileSummaries) {
+        channel.appendLine(`• ${p.fileName}:`);
+        channel.appendLine(`  What Changed:    ${p.whatChanged}`);
+        channel.appendLine(`  Possible Reasons: ${p.possibleReasons}`);
+      }
+      channel.appendLine('');
+
+      channel.appendLine('[SUPPORTING COMMITS]');
+      channel.appendLine(subSeparator);
+      channel.appendLine(info.explanation.supportingCommits);
+      channel.appendLine('');
+
+      channel.appendLine('[UNCERTAINTY & EVIDENCE LIMITATIONS]');
+      channel.appendLine(subSeparator);
+      channel.appendLine(info.explanation.uncertainty);
       channel.appendLine(separator);
       channel.appendLine('');
     }

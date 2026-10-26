@@ -69,23 +69,26 @@ Selecting the Command Center opens an organized VS Code QuickPick menu:
   3. Click the edit pencil icon next to `ORIGINX: Why Was This Changed?` (or press `Enter`).
   4. Press your desired custom key combination and press `Enter` to confirm, or press `Delete` to remove the shortcut entirely.
 
-### 5. Multi-File Selection & Usage Confirmation (Phase 4B.1)
+### 5. Multi-File Selection, Confirmation UI & Cross-File AI Explanations (Phase 4B)
 - **Explorer Context Menu Integration**: Select one or multiple files in VS Code's File Explorer, right-click, and select **`ORIGINX: Why Were These Changed?`**.
 - **Robust File Validation**:
   - Acceptable files: Local, readable, Git-tracked text files.
   - Safe Exclusions: Directories, duplicate selections, non-local URI schemes, broken symlinks, binary files (via extension check and 512-byte null-byte buffer inspection), and untracked files are excluded with transparent reasons recorded in the ORIGINX Output Channel.
   - Mixed Repository Awareness: If selected files originate from different Git repositories, ORIGINX flags this condition and discloses it in the usage confirmation.
-- **Pre-Analysis Usage Confirmation Dialog**:
-  - Displays selected file count and names.
-  - Displays active AI model identifier and model context window capacity (if known).
-  - Measures payload size using native `model.countTokens()` where supported, with clear labeled fallback to character approximation (~4 chars/token).
-  - Discloses truncation or bounding warnings if diffs exceed safe limits (default 60,000 characters per file).
-  - Provides **"Analyze"**, **"Don't Show Again"**, and **"Cancel"** actions.
-  - Never claims knowledge of private remaining quota.
-  - **Consent Boundary**: Skipping the confirmation dialog via "Don't Show Again" never bypasses the core `originx.enableAutomaticAnalysis` consent setting.
-- **Preference Restoration**:
-  - Controlled by `originx.showMultiFileConfirmation` setting (default `true`).
-  - Users can restore or suppress the confirmation at any time via the Command Center or VS Code Settings.
+- **VS Code-Themed Confirmation Webview**:
+  - Displays selected file count, file paths, active Copilot model, payload size, model context capacity, and truncation/mixed-repo warnings.
+  - Features a real HTML checkbox: **"Don't show this confirmation again"**.
+  - Action buttons: **"Cancel"** and **"Analyze Files"**.
+  - **Clean Preference Behavior**: Checking the checkbox only persists when "Analyze Files" is clicked. "Cancel" never alters preferences. Users can restore confirmation anytime from the Command Center.
+  - **Consent Boundary**: Skipping the confirmation dialog never bypasses `originx.enableAutomaticAnalysis`.
+- **Working Cross-File AI Explanations (Copilot LM)**:
+  - Generates cross-file synthesized explanations via the native VS Code Language Model API (`vscode.lm`).
+  - **Cross-File Relationship & Summary**: Explains the overarching architectural narrative and how changes connect across files.
+  - **Per-File Change Breakdown**: Details what changed and possible motivations for every selected file (defaults to "Original reason unknown" when commit messages lack motivation).
+  - **Supporting Commits**: Verified citations cross-checked against actual Git history to prevent hallucinated commits.
+  - **Uncertainty & Limitations**: Flags uncommitted working tree modifications, bounded diffs, or squashed commits.
+  - **Dual Presentation**: Full VS Code-themed interactive Webview results panel + complete logs in the dedicated Output Channel.
+  - **Context Limit Safeguards**: Safely bounds diffs and commit depth when exceeding model context windows without silently dropping any file.
 
 ---
 
@@ -129,7 +132,7 @@ Selecting the Command Center opens an organized VS Code QuickPick menu:
    npm run compile
    ```
 
-3. Run the offline automated test suite (85 tests running completely offline with zero live API calls):
+3. Run the offline automated test suite (94 tests running completely offline with zero live API calls):
    ```bash
    npm test
    ```
