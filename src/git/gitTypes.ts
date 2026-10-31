@@ -2,6 +2,7 @@
  * Git and context data types for ORIGINX
  */
 import { ExplanationStatus, GeminiExplanation, RequestDiagnostics } from '../gemini/geminiTypes';
+import { Neo4jCommitEvidence } from '../neo4j/neo4jGraphTypes';
 
 export interface CommitInfo {
   hash: string;
@@ -46,4 +47,7 @@ export interface GitHistoryResult {
   explanationError?: string;
   explanationStatus?: ExplanationStatus;
   explanationDiagnostics?: RequestDiagnostics;
+  neo4jEvidence?: Neo4jCommitEvidence[];
+  neo4jRepositoryId?: string;
+  neo4jDurationMs?: number;
 }

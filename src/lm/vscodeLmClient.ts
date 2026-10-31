@@ -79,6 +79,46 @@ export interface VsCodeLmCallResult {
 }
 
 /**
+ * Sorts discovered language models so standard Copilot chat models (e.g. gpt-4o, gpt-4o-mini)
+ * take precedence over CLI or non-chat models (e.g. copilotcli/Auto).
+ */
+export function sortLanguageModels(models: ILanguageModelChat[]): ILanguageModelChat[] {
+  return [...models].sort((a, b) => {
+    const score = (m: ILanguageModelChat) => {
+      const vendor = (m.vendor || '').toLowerCase();
+      const family = (m.family || '').toLowerCase();
+      const id = (m.id || '').toLowerCase();
+
+      // Deprioritize CLI / terminal models like copilotcli
+      if (vendor.includes('cli') || id.includes('cli') || family === 'auto') {
+        return -100;
+      }
+
+      // Prioritize standard Copilot vendor
+      let points = 0;
+      if (vendor === 'copilot') {
+        points += 50;
+      }
+
+      // Prioritize common robust chat families
+      if (family.includes('gpt-4o-mini') || id.includes('gpt-4o-mini')) {
+        points += 30;
+      } else if (family.includes('gpt-4o') || id.includes('gpt-4o')) {
+        points += 25;
+      } else if (family.includes('claude') || id.includes('claude')) {
+        points += 20;
+      } else if (family.includes('o1') || id.includes('o1')) {
+        points += 15;
+      }
+
+      return points;
+    };
+
+    return score(b) - score(a);
+  });
+}
+
+/**
  * Queries available models dynamically using the VS Code Language Model API.
  */
 export async function getAvailableVsCodeModels(
@@ -89,7 +129,8 @@ export async function getAvailableVsCodeModels(
     return [];
   }
   try {
-    return await provider.selectChatModels(selector);
+    const models = await provider.selectChatModels(selector);
+    return sortLanguageModels(models || []);
   } catch {
     return [];
   }
@@ -163,7 +204,8 @@ export async function callVsCodeLanguageModel(
   // 2. Discover available model dynamically
   let model = options?.modelInstance;
   if (!model) {
-    const availableModels = await provider.selectChatModels(options?.modelSelector);
+    const rawModels = await provider.selectChatModels(options?.modelSelector);
+    const availableModels = sortLanguageModels(rawModels || []);
     if (!availableModels || availableModels.length === 0) {
       const diag: RequestDiagnostics = {
         durationMs: 0,
@@ -180,7 +222,7 @@ export async function callVsCodeLanguageModel(
         diag
       );
     }
-    // Select the first available model discovered dynamically
+    // Select the best available model discovered dynamically
     model = availableModels[0];
   }
 
@@ -222,6 +264,24 @@ export async function callVsCodeLanguageModel(
         responseSizeBytes
       };
       throw new VsCodeLmError('Language model request was cancelled.', diag);
+    }
+
+    if (!fullText || fullText.trim().length === 0) {
+      const diag: RequestDiagnostics = {
+        durationMs: duration,
+        stage: 'completed',
+        category: 'MALFORMED_RESPONSE',
+        details: 'Language model returned an empty response. Ensure GitHub Copilot is active and has available quota.',
+        model: modelIdentifier,
+        provider: 'vscode',
+        requestSizeBytes: promptByteLength,
+        approximateInputTokens,
+        responseSizeBytes: 0
+      };
+      throw new VsCodeLmError(
+        'Language model returned an empty response. Ensure GitHub Copilot is active and has available quota.',
+        diag
+      );
     }
 
     const diag: RequestDiagnostics = {

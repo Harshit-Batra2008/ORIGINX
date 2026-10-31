@@ -1,5 +1,6 @@
 import type * as vscode from 'vscode';
 import { CommitInfo, SelectionContext } from '../git/gitTypes';
+import { Neo4jCommitEvidence } from '../neo4j/neo4jGraphTypes';
 import { scanPayload } from '../security/redactor';
 import {
   callVsCodeLanguageModel,
@@ -40,13 +41,18 @@ export class GeminiExplainer {
       aiProvider?: string;
       abortSignal?: AbortSignal;
       onRetry?: (attempt: number, maxRetries: number, delayMs: number) => void;
+      neo4jEvidence?: Neo4jCommitEvidence[];
+      repositoryId?: string;
     }
   ): Promise<ExplainExecutionResult> {
     // 1. Scan payload for sensitive credentials before preparing request
+    const neoSubjects = (options?.neo4jEvidence || []).map((c) => c.subject || '');
+    const neoBodies = (options?.neo4jEvidence || []).map((c) => c.body || '');
+
     const scanResult = scanPayload({
       selectedText: selection.selectedText,
-      commitSubjects: commits.map((c) => c.subject),
-      commitBodies: commits.map((c) => c.body),
+      commitSubjects: commits.map((c) => c.subject).concat(neoSubjects),
+      commitBodies: commits.map((c) => c.body).concat(neoBodies),
       diffs: commits.map((c) => c.diff).concat(uncommittedDiff ? [uncommittedDiff] : [])
     });
 
@@ -76,7 +82,9 @@ export class GeminiExplainer {
       endLine: selection.endLine,
       selectedText: scanResult.sanitizedSelectedText,
       commits: sanitizedCommits,
-      uncommittedDiff: sanitizedUncommitted
+      uncommittedDiff: sanitizedUncommitted,
+      neo4jEvidence: options?.neo4jEvidence,
+      repositoryId: options?.repositoryId
     });
 
     const totalDiffChars =
@@ -95,7 +103,12 @@ export class GeminiExplainer {
         }
       });
 
-      const explanation = parseGeminiExplanation(callResult.text, commits, callResult.model);
+      const explanation = parseGeminiExplanation(
+        callResult.text,
+        commits,
+        callResult.model,
+        options?.neo4jEvidence
+      );
       return {
         status: 'success',
         explanation,
@@ -142,12 +155,19 @@ export class GeminiExplainer {
     uncommittedDiff?: string,
     _model?: string,
     promptVariant: 'compact' | 'standard' = 'compact',
-    _aiProvider?: string
+    _aiProvider?: string,
+    extra?: {
+      neo4jEvidence?: Neo4jCommitEvidence[];
+      repositoryId?: string;
+    }
   ): InspectionPayload {
+    const neoSubjects = (extra?.neo4jEvidence || []).map((c) => c.subject || '');
+    const neoBodies = (extra?.neo4jEvidence || []).map((c) => c.body || '');
+
     const scanResult = scanPayload({
       selectedText: selection.selectedText,
-      commitSubjects: commits.map((c) => c.subject),
-      commitBodies: commits.map((c) => c.body),
+      commitSubjects: commits.map((c) => c.subject).concat(neoSubjects),
+      commitBodies: commits.map((c) => c.body).concat(neoBodies),
       diffs: commits.map((c) => c.diff).concat(uncommittedDiff ? [uncommittedDiff] : [])
     });
 
@@ -168,7 +188,9 @@ export class GeminiExplainer {
       endLine: selection.endLine,
       selectedText: scanResult.sanitizedSelectedText,
       commits: sanitizedCommits,
-      uncommittedDiff: sanitizedUncommitted
+      uncommittedDiff: sanitizedUncommitted,
+      neo4jEvidence: extra?.neo4jEvidence,
+      repositoryId: extra?.repositoryId
     });
 
     return {

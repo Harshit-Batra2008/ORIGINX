@@ -89,7 +89,28 @@ export class MultiFileExplainer {
         }
       });
 
+      if (!callResult.text || callResult.text.trim().length === 0) {
+        return {
+          status: 'failed',
+          error: 'Language model returned an empty explanation.',
+          diagnostics: callResult.diagnostics
+        };
+      }
+
       const explanation = parseMultiFileExplanation(callResult.text, files, callResult.model);
+
+      const isCompletelyMalformed =
+        explanation.crossFileSummary.includes('could not be extracted') &&
+        explanation.perFileSummaries.every((s) => !s.whatChanged || s.whatChanged.includes('Recent changes recorded across'));
+
+      if (isCompletelyMalformed) {
+        return {
+          status: 'failed',
+          error: 'Model response was malformed and did not contain required explanation sections.',
+          explanation,
+          diagnostics: callResult.diagnostics
+        };
+      }
 
       return {
         status: 'ok',

@@ -1,3 +1,9 @@
+export interface StatementClassification {
+  verified: string[];
+  inferred: string[];
+  unknown: string[];
+}
+
 export interface GeminiExplanation {
   whatChanged: string;
   possibleReasons: string;
@@ -6,6 +12,8 @@ export interface GeminiExplanation {
   rawResponse: string;
   model: string;
   isAiInference: boolean;
+  classification?: StatementClassification;
+  chronologicalEvolution?: string;
 }
 
 export interface ExplanationPayloadPreview {

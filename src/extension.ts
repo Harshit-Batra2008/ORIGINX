@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { GeminiExplainer } from './gemini/geminiExplainer';
-import { getHistoryForSelection } from './git/gitService';
+import { findRepoRoot, getHistoryForSelection, runGit } from './git/gitService';
 import { SelectionContext } from './git/gitTypes';
 import { getAvailableVsCodeModels } from './lm/vscodeLmClient';
 import { estimateMultiFileTokens, promptMultiFileUsageConfirmation } from './multiFile/multiFileConfirmation';
@@ -9,7 +9,20 @@ import { MultiFileExplainer } from './multiFile/multiFileExplainer';
 import { gatherMultiFileGitEvidence } from './multiFile/multiFileService';
 import { MultiFileHistoryResult } from './multiFile/multiFileTypes';
 import { validateMultiFileSelection } from './multiFile/multiFileValidator';
-import { migrateAndPurgeLegacySecrets } from './security/secretManager';
+import { clearStoredNeo4jPassword, getOrPromptNeo4jCredentials } from './neo4j/neo4jAuthHelper';
+import { redactSecret } from './neo4j/neo4jEnv';
+import {
+  estimateRepositoryPruneCounts,
+  fetchLocalGitGraphData,
+  importGitGraph,
+  pruneRepositorySubgraph,
+  resolveRepositoryIdentity
+} from './neo4j/neo4jGraphImporter';
+import { inspectGraphEvidence } from './neo4j/neo4jGraphInspector';
+import { retrieveFileEvidence } from './neo4j/neo4jEvidenceRetriever';
+import { Neo4jCommitEvidence } from './neo4j/neo4jGraphTypes';
+import { closeNeo4jDriver, createNeo4jDriver, resolveNeo4jConfig, verifyConnection } from './neo4j/neo4jService';
+import { migrateAndPurgeLegacySecrets, SecretManager } from './security/secretManager';
 import { showCommandCenter } from './ui/commandCenter';
 import { OutputView } from './ui/outputView';
 import { WebviewView } from './ui/webviewView';
@@ -160,6 +173,35 @@ export function activate(context: vscode.ExtensionContext) {
         };
 
         const result = await getHistoryForSelection(selectionContext);
+
+        let neo4jEvidence: Neo4jCommitEvidence[] | undefined = undefined;
+        let repoId: string | undefined = undefined;
+        try {
+          const repoRoot = await findRepoRoot(filePath);
+          if (repoRoot) {
+            const repoInfo = await resolveRepositoryIdentity(repoRoot);
+            repoId = repoInfo.id;
+            const relPath = path.relative(repoRoot, filePath).replace(/\\/g, '/');
+
+            const secretManager = new SecretManager(context.secrets);
+            const storedPassword = await secretManager.getNeo4jPassword();
+            const activePassword = (process.env.NEO4J_PASSWORD && process.env.NEO4J_PASSWORD.trim()) || (storedPassword && storedPassword.trim());
+
+            if (activePassword) {
+              const authConfig = resolveNeo4jConfig({ password: activePassword });
+              const driver = createNeo4jDriver(authConfig);
+              try {
+                const evidenceResult = await retrieveFileEvidence(driver, repoInfo.id, relPath, 25);
+                if (evidenceResult.status === 'ok' && evidenceResult.commits.length > 0) {
+                  neo4jEvidence = evidenceResult.commits;
+                }
+              } finally {
+                await driver.close();
+              }
+            }
+          }
+        } catch {}
+
         const promptVariant =
           vscode.workspace.getConfiguration('originx').get<'compact' | 'standard'>('promptVariant', 'compact');
         const payload = explainer.buildInspectionPayload(
@@ -167,7 +209,12 @@ export function activate(context: vscode.ExtensionContext) {
           result.commits,
           result.uncommittedDiff,
           undefined,
-          promptVariant
+          promptVariant,
+          undefined,
+          {
+            neo4jEvidence,
+            repositoryId: repoId
+          }
         );
 
         const payloadDoc = await vscode.workspace.openTextDocument({
@@ -246,8 +293,50 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
               }
 
-              // 2. If Git evidence exists, check automatic AI analysis setting
-              if (result.status === 'ok' && result.commits.length > 0) {
+              // 1.5. Query Neo4j Knowledge Graph evidence for file if available (non-blocking, graceful fallback)
+              let neo4jEvidence: Neo4jCommitEvidence[] | undefined = undefined;
+              let repoId: string | undefined = undefined;
+              try {
+                const repoRoot = await findRepoRoot(filePath);
+                if (repoRoot) {
+                  const repoInfo = await resolveRepositoryIdentity(repoRoot);
+                  repoId = repoInfo.id;
+                  const relPath = path.relative(repoRoot, filePath).replace(/\\/g, '/');
+
+                  const secretManager = new SecretManager(context.secrets);
+                  const storedPassword = await secretManager.getNeo4jPassword();
+                  const activePassword =
+                    (process.env.NEO4J_PASSWORD && process.env.NEO4J_PASSWORD.trim()) ||
+                    (storedPassword && storedPassword.trim());
+
+                  if (activePassword) {
+                    const authConfig = resolveNeo4jConfig({ password: activePassword });
+                    const driver = createNeo4jDriver(authConfig);
+                    try {
+                      const neoStartTime = Date.now();
+                      const evidenceResult = await retrieveFileEvidence(driver, repoInfo.id, relPath, 25);
+                      if (evidenceResult.status === 'ok' && evidenceResult.commits.length > 0) {
+                        neo4jEvidence = evidenceResult.commits;
+                        result.neo4jEvidence = neo4jEvidence;
+                        result.neo4jRepositoryId = repoInfo.id;
+                        result.neo4jDurationMs = Date.now() - neoStartTime;
+                      }
+                    } finally {
+                      await driver.close();
+                    }
+                  }
+                }
+              } catch (neoErr) {
+                // Non-fatal: if Neo4j is offline or fails, preserve existing Git-based explanation
+                console.warn('[ORIGINX] Neo4j evidence retrieval skipped or failed:', redactSecret(String(neoErr)));
+              }
+
+              // 2. If Git evidence or Neo4j evidence exists, check automatic AI analysis setting
+              const hasEvidence =
+                (result.status === 'ok' && result.commits.length > 0) ||
+                (neo4jEvidence && neo4jEvidence.length > 0);
+
+              if (hasEvidence) {
                 const isAutoEnabled = vscode.workspace
                   .getConfiguration('originx')
                   .get<boolean>('enableAutomaticAnalysis', false);
@@ -269,7 +358,9 @@ export function activate(context: vscode.ExtensionContext) {
                     undefined,
                     {
                       promptVariant,
-                      cancellationToken: token
+                      cancellationToken: token,
+                      neo4jEvidence,
+                      repositoryId: repoId
                     }
                   );
 
@@ -335,8 +426,8 @@ export function activate(context: vscode.ExtensionContext) {
                   break;
                 case 'ok':
                   const summaryMsg = result.explanation
-                    ? `ORIGINX: Retrieved ${result.commits.length} commit(s) + Copilot LM explanation`
-                    : `ORIGINX: Found ${result.commits.length} commit(s) for selected lines`;
+                    ? `ORIGINX: Retrieved ${result.commits.length} line commit(s)${neo4jEvidence ? ` + ${neo4jEvidence.length} graph commit(s)` : ''} + Copilot LM explanation`
+                    : `ORIGINX: Found ${result.commits.length} commit(s) for selected lines${neo4jEvidence ? ` (${neo4jEvidence.length} in Neo4j graph)` : ''}`;
                   vscode.window.setStatusBarMessage(summaryMsg, 4000);
                   break;
               }
@@ -551,6 +642,441 @@ export function activate(context: vscode.ExtensionContext) {
       }
     );
 
+    // Command: ORIGINX: Import Git History to Neo4j Knowledge Graph (Phase 5B)
+    const importGitGraphDisposable = vscode.commands.registerCommand(
+      'originx.importGitGraph',
+      async (clickedUri?: vscode.Uri) => {
+        try {
+          let targetPath: string | undefined = clickedUri?.fsPath;
+          if (!targetPath && vscode.window.activeTextEditor?.document.uri.scheme === 'file') {
+            targetPath = vscode.window.activeTextEditor.document.uri.fsPath;
+          }
+          if (!targetPath && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+            targetPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+          }
+
+          if (!targetPath) {
+            vscode.window.showWarningMessage('ORIGINX: Please open a workspace or file to import Git history.');
+            return;
+          }
+
+          const repoRoot = await findRepoRoot(targetPath);
+          if (!repoRoot) {
+            vscode.window.showWarningMessage(`ORIGINX: "${path.basename(targetPath)}" is not inside a Git repository.`);
+            return;
+          }
+
+          const repoInfo = await resolveRepositoryIdentity(repoRoot);
+          let totalCommits = 0;
+          try {
+            const countRes = await runGit(['rev-list', '--count', 'HEAD'], repoRoot);
+            if (countRes.exitCode === 0) {
+              totalCommits = parseInt(countRes.stdout.trim(), 10) || 0;
+            }
+          } catch {}
+
+          const maxCommits = Math.min(totalCommits || 50, 50);
+          const config = resolveNeo4jConfig();
+
+          const choice = await vscode.window.showInformationMessage(
+            `Import Git history for "${repoInfo.name}" into Neo4j AuraDB?\n\nTarget: ${config.uri}\nUser: ${config.username}\nScope: Up to ${maxCommits} commits, changed files, and contributors.\n(Code diffs and secrets are strictly excluded).`,
+            { modal: true },
+            'Proceed with Import',
+            'Cancel'
+          );
+
+          if (choice !== 'Proceed with Import') {
+            return;
+          }
+
+          const secretManager = new SecretManager(context.secrets);
+          const authConfig = await getOrPromptNeo4jCredentials(secretManager, config);
+          if (!authConfig) {
+            return; // User cancelled password prompt
+          }
+
+          const excludedDirectories = vscode.workspace
+            .getConfiguration('originx')
+            .get<string[]>('neo4jExcludedDirectories');
+
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: `ORIGINX: Importing Git history for ${repoInfo.name} into Neo4j AuraDB...`,
+              cancellable: true
+            },
+            async (_progress, token) => {
+              try {
+                const { commits } = await fetchLocalGitGraphData(repoRoot, maxCommits, {
+                  cancellationToken: token,
+                  excludedDirectories
+                });
+
+                if (token.isCancellationRequested || commits.length === 0) {
+                  vscode.window.showInformationMessage('ORIGINX: Git graph import cancelled or no commits found.');
+                  return;
+                }
+
+                const driver = createNeo4jDriver(authConfig);
+                try {
+                  const summary = await importGitGraph(driver, repoInfo, commits, {
+                    cancellationToken: token,
+                    excludedDirectories
+                  });
+
+                  OutputView.showGraphImportSummary(summary);
+
+                  if (summary.status === 'ok') {
+                    vscode.window.showInformationMessage(
+                      `ORIGINX: Successfully processed ${summary.commitsProcessed} commits and ${summary.filesProcessed} files (${summary.databaseCommitCount} repo commits, ${summary.databaseFileCount} repo files in Neo4j) (${(summary.durationMs / 1000).toFixed(1)}s).`
+                    );
+                  } else if (summary.status === 'cancelled') {
+                    vscode.window.showInformationMessage('ORIGINX: Git graph import was cancelled.');
+                  } else {
+                    vscode.window.showErrorMessage(
+                      `ORIGINX Graph Import Error: ${summary.error || 'Unknown error'}. See Output Channel.`
+                    );
+                  }
+                } finally {
+                  await driver.close();
+                }
+              } catch (err: any) {
+                const rawMsg = err instanceof Error ? err.message : String(err);
+                vscode.window.showErrorMessage(`ORIGINX Graph Import Error: ${redactSecret(rawMsg)}`);
+              }
+            }
+          );
+        } catch (err: any) {
+          const rawMsg = err instanceof Error ? err.message : String(err);
+          vscode.window.showErrorMessage(`ORIGINX Error: ${redactSecret(rawMsg)}`);
+        }
+      }
+    );
+
+    // Command: ORIGINX: Inspect Neo4j Evidence Graph (Phase 5B & 5B.2)
+    const inspectGitGraphDisposable = vscode.commands.registerCommand(
+      'originx.inspectGitGraph',
+      async () => {
+        try {
+          let targetPath: string | undefined = undefined;
+          if (vscode.window.activeTextEditor?.document.uri.scheme === 'file') {
+            targetPath = vscode.window.activeTextEditor.document.uri.fsPath;
+          } else if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+            targetPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+          }
+
+          let repoId: string | undefined = undefined;
+          if (targetPath) {
+            try {
+              const repoRoot = await findRepoRoot(targetPath);
+              if (repoRoot) {
+                const repoInfo = await resolveRepositoryIdentity(repoRoot);
+                repoId = repoInfo.id;
+              }
+            } catch {}
+          }
+
+          const secretManager = new SecretManager(context.secrets);
+          const authConfig = await getOrPromptNeo4jCredentials(secretManager);
+          if (!authConfig) {
+            return; // User cancelled password prompt
+          }
+
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: 'ORIGINX: Inspecting Neo4j Evidence Graph...',
+              cancellable: false
+            },
+            async () => {
+              const driver = createNeo4jDriver(authConfig);
+              try {
+                const summary = await inspectGraphEvidence(driver, repoId);
+                OutputView.showGraphInspectionSummary(summary);
+
+                if (summary.connected) {
+                  const scopeMsg = summary.repositoryScoped
+                    ? `Repository "${summary.repositoryScoped.repoName}": ${summary.repositoryScoped.commitCount} commit(s), ${summary.repositoryScoped.fileCount} file(s). Global total: ${summary.globalDatabase.totalCommits} commit(s) across ${summary.globalDatabase.totalRepositories} repo(s).`
+                    : `Global Database: ${summary.globalDatabase.totalRepositories} repo(s), ${summary.globalDatabase.totalCommits} commit(s), ${summary.globalDatabase.totalFiles} file(s).`;
+
+                  const choice = await vscode.window.showInformationMessage(
+                    `ORIGINX Evidence Graph: ${scopeMsg}`,
+                    'Open Output Channel'
+                  );
+                  if (choice === 'Open Output Channel') {
+                    OutputView.getChannel().show(true);
+                  }
+                } else {
+                  vscode.window.showErrorMessage(
+                    `ORIGINX Graph Inspection Error: ${summary.error || 'Connection failed'}. See Output Channel.`
+                  );
+                }
+              } finally {
+                await driver.close();
+              }
+            }
+          );
+        } catch (err: any) {
+          const rawMsg = err instanceof Error ? err.message : String(err);
+          vscode.window.showErrorMessage(`ORIGINX Error: ${redactSecret(rawMsg)}`);
+        }
+      }
+    );
+
+    // Command: ORIGINX: Clean Up Repository Subgraph in Neo4j (Phase 5B.2)
+    const pruneGitGraphDisposable = vscode.commands.registerCommand(
+      'originx.pruneGitGraph',
+      async (clickedUri?: vscode.Uri) => {
+        try {
+          let targetPath: string | undefined = clickedUri?.fsPath;
+          if (!targetPath && vscode.window.activeTextEditor?.document.uri.scheme === 'file') {
+            targetPath = vscode.window.activeTextEditor.document.uri.fsPath;
+          }
+          if (!targetPath && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+            targetPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+          }
+
+          if (!targetPath) {
+            vscode.window.showWarningMessage('ORIGINX: Please open a workspace or file to clean up repository graph.');
+            return;
+          }
+
+          const repoRoot = await findRepoRoot(targetPath);
+          if (!repoRoot) {
+            vscode.window.showWarningMessage(`ORIGINX: "${path.basename(targetPath)}" is not inside a Git repository.`);
+            return;
+          }
+
+          const repoInfo = await resolveRepositoryIdentity(repoRoot);
+          const secretManager = new SecretManager(context.secrets);
+          const authConfig = await getOrPromptNeo4jCredentials(secretManager);
+          if (!authConfig) {
+            return; // User cancelled password prompt
+          }
+
+          // Step 1: Pre-calculate scoped deletion estimate
+          const driver = createNeo4jDriver(authConfig);
+          let estimate;
+          try {
+            estimate = await estimateRepositoryPruneCounts(driver, repoInfo.id);
+          } finally {
+            await driver.close();
+          }
+
+          if (estimate.commitsToDelete === 0 && estimate.filesToDelete === 0) {
+            vscode.window.showInformationMessage(
+              `ORIGINX: No graph data found in Neo4j for repository "${repoInfo.name}" (${repoInfo.id}). Nothing to prune.`
+            );
+            return;
+          }
+
+          // Step 2: Explicit confirmation with target repository and estimated deletion counts
+          const confirmChoice = await vscode.window.showWarningMessage(
+            `Clean up Neo4j graph data for repository "${repoInfo.name}"?\n\nTarget Repository ID: ${repoInfo.id}\nCommits to delete: ${estimate.commitsToDelete}\nFiles to delete: ${estimate.filesToDelete}\n\nNote: Contributor (Person) nodes and other repositories are preserved. Code diffs and secrets are never stored.`,
+            { modal: true },
+            'Delete Repository Subgraph',
+            'Cancel'
+          );
+
+          if (confirmChoice !== 'Delete Repository Subgraph') {
+            return;
+          }
+
+          // Step 3: Perform scoped cleanup with progress and cancellation support
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: `ORIGINX: Cleaning up Neo4j graph for ${repoInfo.name}...`,
+              cancellable: true
+            },
+            async (_progress, token) => {
+              const runDriver = createNeo4jDriver(authConfig);
+              try {
+                const result = await pruneRepositorySubgraph(runDriver, repoInfo.id, {
+                  cancellationToken: token
+                });
+
+                OutputView.showGraphPruneSummary(result);
+
+                if (result.status === 'ok') {
+                  vscode.window.showInformationMessage(
+                    `ORIGINX: Successfully pruned ${result.deletedCommits} commits and ${result.deletedFiles} files for "${result.repoName}" from Neo4j.`
+                  );
+                } else if (result.status === 'cancelled') {
+                  vscode.window.showInformationMessage('ORIGINX: Repository graph cleanup was cancelled.');
+                } else {
+                  vscode.window.showErrorMessage(
+                    `ORIGINX Cleanup Error: ${result.error || 'Failed to prune repository graph'}`
+                  );
+                }
+              } finally {
+                await runDriver.close();
+              }
+            }
+          );
+        } catch (err: any) {
+          const rawMsg = err instanceof Error ? err.message : String(err);
+          vscode.window.showErrorMessage(`ORIGINX Error: ${redactSecret(rawMsg)}`);
+        }
+      }
+    );
+
+    // Command: ORIGINX: Retrieve Neo4j Evidence for Active File (Phase 5C.1)
+    const retrieveFileEvidenceDisposable = vscode.commands.registerCommand(
+      'originx.retrieveFileEvidence',
+      async (clickedUri?: vscode.Uri) => {
+        try {
+          let targetPath: string | undefined = clickedUri?.fsPath;
+          if (!targetPath && vscode.window.activeTextEditor?.document.uri.scheme === 'file') {
+            targetPath = vscode.window.activeTextEditor.document.uri.fsPath;
+          }
+
+          if (!targetPath) {
+            vscode.window.showWarningMessage('ORIGINX: Please open an active file in the editor or right-click a file to retrieve Neo4j evidence.');
+            return;
+          }
+
+          const repoRoot = await findRepoRoot(targetPath);
+          if (!repoRoot) {
+            vscode.window.showWarningMessage(`ORIGINX: "${path.basename(targetPath)}" is not inside a Git repository.`);
+            return;
+          }
+
+          const repoInfo = await resolveRepositoryIdentity(repoRoot);
+          const relativePath = path.relative(repoRoot, targetPath).replace(/\\/g, '/');
+
+          const secretManager = new SecretManager(context.secrets);
+          const authConfig = await getOrPromptNeo4jCredentials(secretManager);
+          if (!authConfig) {
+            return; // User cancelled password prompt
+          }
+
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: `ORIGINX: Retrieving Neo4j evidence for ${path.basename(targetPath)}...`,
+              cancellable: false
+            },
+            async () => {
+              const driver = createNeo4jDriver(authConfig);
+              try {
+                const result = await retrieveFileEvidence(driver, repoInfo.id, relativePath);
+                OutputView.showFileEvidence(result);
+
+                if (result.status === 'ok') {
+                  const msg = result.commits.length > 0
+                    ? `ORIGINX: Retrieved ${result.commits.length} historical commit(s) for "${relativePath}" from Neo4j.`
+                    : `ORIGINX: No historical commits found in Neo4j for "${relativePath}".`;
+                  const choice = await vscode.window.showInformationMessage(msg, 'Open Output Channel');
+                  if (choice === 'Open Output Channel') {
+                    OutputView.getChannel().show(true);
+                  }
+                } else {
+                  vscode.window.showErrorMessage(
+                    `ORIGINX Evidence Retrieval Error: ${result.error || 'Failed to retrieve evidence'}. See Output Channel.`
+                  );
+                }
+              } finally {
+                await driver.close();
+              }
+            }
+          );
+        } catch (err: any) {
+          const rawMsg = err instanceof Error ? err.message : String(err);
+          vscode.window.showErrorMessage(`ORIGINX Error: ${redactSecret(rawMsg)}`);
+        }
+      }
+    );
+
+    // Command: ORIGINX: Manage Neo4j Database Credentials (Phase 5B)
+    const manageNeo4jCredentialsDisposable = vscode.commands.registerCommand(
+      'originx.manageNeo4jCredentials',
+      async () => {
+        try {
+          const secretManager = new SecretManager(context.secrets);
+          const hasStored = await secretManager.hasNeo4jPassword();
+          const currentConfig = resolveNeo4jConfig();
+
+          const choice = await vscode.window.showQuickPick(
+            [
+              {
+                id: 'username',
+                label: `$(person) Set Neo4j Username (Current: "${currentConfig.username}")`,
+                description: 'Configure username in ORIGINX settings'
+              },
+              {
+                id: 'store',
+                label: hasStored ? '$(edit) Update Stored Neo4j Password' : '$(key) Store Neo4j Password in SecretStorage',
+                description: hasStored ? 'Replace currently saved AuraDB password' : 'Save password securely for future sessions'
+              },
+              {
+                id: 'clear',
+                label: '$(trash) Clear Stored Neo4j Password',
+                description: hasStored ? 'Remove saved password from VS Code SecretStorage' : '(No password stored)'
+              },
+              {
+                id: 'test',
+                label: `$(plug) Test Neo4j AuraDB Connection (as "${currentConfig.username}")`,
+                description: 'Verify connection using RETURN 1 AS success'
+              }
+            ],
+            {
+              title: 'ORIGINX: Manage Neo4j Credentials',
+              placeHolder: 'Select a credential management action...'
+            }
+          );
+
+          if (!choice) return;
+
+          if (choice.id === 'username') {
+            const enteredUser = await vscode.window.showInputBox({
+              title: 'ORIGINX: Configure Neo4j Username',
+              prompt: 'Enter username for Neo4j AuraDB database authentication',
+              value: currentConfig.username,
+              ignoreFocusOut: true
+            });
+            if (enteredUser && enteredUser.trim().length > 0) {
+              await vscode.workspace
+                .getConfiguration('originx')
+                .update('neo4jUsername', enteredUser.trim(), vscode.ConfigurationTarget.Global);
+              vscode.window.showInformationMessage(`ORIGINX: Neo4j username set to "${enteredUser.trim()}".`);
+            }
+          } else if (choice.id === 'store') {
+            const entered = await vscode.window.showInputBox({
+              password: true,
+              ignoreFocusOut: true,
+              title: 'ORIGINX: Store Neo4j Password',
+              prompt: `Enter the Neo4j AuraDB password for user "${currentConfig.username}" to save in VS Code SecretStorage`,
+              placeHolder: 'Password'
+            });
+            if (entered && entered.trim().length > 0) {
+              await secretManager.storeNeo4jPassword(entered.trim());
+              vscode.window.showInformationMessage('ORIGINX: Neo4j password saved securely in SecretStorage.');
+            }
+          } else if (choice.id === 'clear') {
+            await clearStoredNeo4jPassword(secretManager);
+          } else if (choice.id === 'test') {
+            const config = await getOrPromptNeo4jCredentials(secretManager);
+            if (config) {
+              const res = await verifyConnection(config);
+              if (res.connected) {
+                vscode.window.showInformationMessage(
+                  `ORIGINX: Neo4j AuraDB connected as "${config.username}" (${res.durationMs}ms)! ${res.serverVersion || ''}`
+                );
+              } else {
+                vscode.window.showErrorMessage(
+                  `ORIGINX Connection Test Failed for user "${config.username}": ${res.error}`
+                );
+              }
+            }
+          }
+        } catch (err: any) {
+          const rawMsg = err instanceof Error ? err.message : String(err);
+          vscode.window.showErrorMessage(`ORIGINX Error: ${redactSecret(rawMsg)}`);
+        }
+      }
+    );
+
     context.subscriptions.push(
       commandCenterDisposable,
       listVsCodeModelsDisposable,
@@ -558,7 +1084,12 @@ export function activate(context: vscode.ExtensionContext) {
       disableAutoDisposable,
       inspectPayloadDisposable,
       explainDisposable,
-      explainMultiDisposable
+      explainMultiDisposable,
+      importGitGraphDisposable,
+      inspectGitGraphDisposable,
+      retrieveFileEvidenceDisposable,
+      pruneGitGraphDisposable,
+      manageNeo4jCredentialsDisposable
     );
   } catch (activationErr) {
     const errMsg =
@@ -568,7 +1099,8 @@ export function activate(context: vscode.ExtensionContext) {
   }
 }
 
-export function deactivate() {
+export async function deactivate() {
   OutputView.dispose();
   WebviewView.dispose();
+  await closeNeo4jDriver();
 }

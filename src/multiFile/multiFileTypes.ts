@@ -1,6 +1,6 @@
 import type * as vscode from 'vscode';
 import { CommitInfo } from '../git/gitTypes';
-import { RequestDiagnostics } from '../gemini/geminiTypes';
+import { RequestDiagnostics, StatementClassification } from '../gemini/geminiTypes';
 import { ILanguageModelChat } from '../lm/vscodeLmClient';
 
 export interface FileValidationItem {
@@ -61,6 +61,7 @@ export interface PerFileExplanation {
   filePath: string;
   whatChanged: string;
   possibleReasons: string;
+  classification?: StatementClassification;
 }
 
 export interface MultiFileExplanation {
@@ -69,6 +70,7 @@ export interface MultiFileExplanation {
   supportingCommits: string;
   uncertainty: string;
   model: string;
+  hallucinatedCommits?: string[];
 }
 
 export interface MultiFileHistoryResult {

@@ -107,6 +107,34 @@ export function getCommandCenterItems(
       detail: 'View active Copilot and vendor models supporting chat generation'
     },
     {
+      id: 'import_graph',
+      category: 'GENERAL',
+      label: '$(cloud-upload) Import Git History to Neo4j Evidence Graph',
+      description: 'Ingest local commits, files, and contributors into Neo4j AuraDB',
+      detail: 'Creates Repository, Commit, File, and Person nodes with provenance'
+    },
+    {
+      id: 'inspect_graph',
+      category: 'GENERAL',
+      label: '$(graph) Inspect Neo4j Evidence Graph',
+      description: 'Query ingested commits, files, and contributor statistics',
+      detail: 'Read-only graph inspection without invoking AI models'
+    },
+    {
+      id: 'retrieve_evidence',
+      category: 'GENERAL',
+      label: '$(history) Retrieve File Evidence from Neo4j',
+      description: 'Query historical commits and change types for active file in Neo4j',
+      detail: 'Read-only query scoped to current repository'
+    },
+    {
+      id: 'prune_graph',
+      category: 'GENERAL',
+      label: '$(trash) Clean Up Repository Subgraph in Neo4j',
+      description: "Safely remove this repository's commits and files from Neo4j",
+      detail: 'Requires confirmation; never deletes Person nodes or other repositories'
+    },
+    {
       label: 'DEVELOPER TOOLS',
       kind: SEPARATOR_KIND
     },
@@ -137,6 +165,13 @@ export function getCommandCenterItems(
       label: '$(info) Show Extension Version / Environment Information',
       description: 'Inspect runtime environment, VS Code version, and Copilot compatibility',
       detail: 'ORIGINX 0.2.0 | Copilot-Native Architecture'
+    },
+    {
+      id: 'manage_neo4j_creds',
+      category: 'DEVELOPER_TOOLS',
+      label: '$(key) Manage Neo4j Database Credentials',
+      description: 'Store, update, or clear Neo4j AuraDB password in SecretStorage',
+      detail: 'Never logs passwords or bundles credentials'
     }
   ];
 }
@@ -304,8 +339,8 @@ export async function showCommandCenter(context?: vscode.ExtensionContext): Prom
   const items = getCommandCenterItems(isAutoAnalysis, showMultiConfirm);
 
   const selected = (await vs.window.showQuickPick(items, {
-    title: 'ORIGINX: Command Center',
-    placeHolder: 'Select an ORIGINX command or developer tool...',
+    title: 'GitWhisper by ORIGINX — Command Center',
+    placeHolder: 'Select a GitWhisper command or developer tool...',
     matchOnDescription: true,
     matchOnDetail: true
   })) as CommandCenterEntry | undefined;
@@ -347,6 +382,22 @@ export async function showCommandCenter(context?: vscode.ExtensionContext): Prom
       await showModelsSubmenu(context);
       break;
 
+    case 'import_graph':
+      await vs.commands.executeCommand('originx.importGitGraph');
+      break;
+
+    case 'inspect_graph':
+      await vs.commands.executeCommand('originx.inspectGitGraph');
+      break;
+
+    case 'retrieve_evidence':
+      await vs.commands.executeCommand('originx.retrieveFileEvidence');
+      break;
+
+    case 'prune_graph':
+      await vs.commands.executeCommand('originx.pruneGitGraph');
+      break;
+
     case 'inspect_payload':
       await vs.commands.executeCommand('originx.inspectPayload');
       break;
@@ -361,6 +412,10 @@ export async function showCommandCenter(context?: vscode.ExtensionContext): Prom
 
     case 'show_env':
       await showEnvironmentSubmenu(context);
+      break;
+
+    case 'manage_neo4j_creds':
+      await vs.commands.executeCommand('originx.manageNeo4jCredentials');
       break;
   }
 }
@@ -385,7 +440,7 @@ export async function showModelsSubmenu(context?: vscode.ExtensionContext): Prom
   const items = getModelSubmenuItems(models);
 
   const selection = (await vs.window.showQuickPick(items, {
-    title: 'ORIGINX: Available AI Models (vscode.lm)',
+    title: 'GitWhisper: Available AI Models (vscode.lm)',
     placeHolder: 'Available language models registered in VS Code...',
     matchOnDescription: true,
     matchOnDetail: true
@@ -424,7 +479,7 @@ export async function showDiagnosticsSubmenu(context?: vscode.ExtensionContext):
   const items = getDiagnosticsSubmenuItems(isAutoAnalysis, promptVariant, showMultiConfirm);
 
   const selection = (await vs.window.showQuickPick(items, {
-    title: 'ORIGINX: Technical Diagnostics & Status',
+    title: 'GitWhisper: Technical Diagnostics & Status',
     placeHolder: 'Inspect active diagnostics or return to Command Center...',
     matchOnDescription: true,
     matchOnDetail: true
@@ -462,7 +517,7 @@ export async function showEnvironmentSubmenu(context?: vscode.ExtensionContext):
   });
 
   const selection = (await vs.window.showQuickPick(items, {
-    title: 'ORIGINX: Environment Information',
+    title: 'GitWhisper: Environment Information',
     placeHolder: 'Inspect environment details or return to Command Center...',
     matchOnDescription: true,
     matchOnDetail: true

@@ -5,12 +5,14 @@ node_modules/
 out/
 dist/
 *.vsix
+*.zip
 .vscode-test/
 
 # Environment and secrets
 .env
 .env.*
 *.env
+!.env.example
 
 # Logs and runtime outputs
 *.log
@@ -33,3 +35,8 @@ scratch/
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Loose root image uploads (canonical assets live in assets/)
+/originx-icon-128.png
+/originx-icon-512.png
+/originx-readme-preview.png

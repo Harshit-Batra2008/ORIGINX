@@ -1,4 +1,5 @@
 export const GEMINI_API_KEY_SECRET = 'originx.geminiApiKey';
+export const NEO4J_PASSWORD_SECRET = 'originx.neo4jPassword';
 
 export interface ISecretStorage {
   get(key: string): Thenable<string | undefined>;
@@ -62,6 +63,45 @@ export class SecretManager {
   public async hasApiKey(): Promise<boolean> {
     const key = await this.getApiKey();
     return typeof key === 'string' && key.length > 0;
+  }
+
+  /**
+   * Securely saves the Neo4j AuraDB password in VS Code SecretStorage.
+   * Throws if the password is empty or whitespace-only.
+   */
+  public async storeNeo4jPassword(password: string): Promise<void> {
+    const trimmed = (password || '').trim();
+    if (!trimmed) {
+      throw new Error('Neo4j password cannot be empty.');
+    }
+    await this.secrets.store(NEO4J_PASSWORD_SECRET, trimmed);
+  }
+
+  /**
+   * Retrieves the Neo4j AuraDB password from VS Code SecretStorage.
+   * Returns undefined if no password is stored.
+   */
+  public async getNeo4jPassword(): Promise<string | undefined> {
+    const pwd = await this.secrets.get(NEO4J_PASSWORD_SECRET);
+    if (!pwd || pwd.trim().length === 0) {
+      return undefined;
+    }
+    return pwd.trim();
+  }
+
+  /**
+   * Removes the Neo4j AuraDB password from VS Code SecretStorage.
+   */
+  public async deleteNeo4jPassword(): Promise<void> {
+    await this.secrets.delete(NEO4J_PASSWORD_SECRET);
+  }
+
+  /**
+   * Checks if a Neo4j password is currently stored in SecretStorage.
+   */
+  public async hasNeo4jPassword(): Promise<boolean> {
+    const pwd = await this.getNeo4jPassword();
+    return typeof pwd === 'string' && pwd.length > 0;
   }
 }
 

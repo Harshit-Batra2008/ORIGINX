@@ -4,6 +4,12 @@ import {
   formatAvailableVsCodeModels,
   ILanguageModelChat
 } from '../lm/vscodeLmClient';
+import {
+  GraphImportSummary,
+  GraphInspectionSummary,
+  Neo4jFileEvidenceResult,
+  RepositoryPruneResult
+} from '../neo4j/neo4jGraphTypes';
 import { MigrationResult } from '../security/secretManager';
 
 function getVsCode(): any {
@@ -21,10 +27,10 @@ export class OutputView {
     if (!this.channel) {
       const vs = getVsCode();
       if (vs && vs.window && typeof vs.window.createOutputChannel === 'function') {
-        this.channel = vs.window.createOutputChannel('ORIGINX: Why Was This Changed?');
+        this.channel = vs.window.createOutputChannel('GitWhisper by ORIGINX: Why Was This Changed?');
       } else {
         this.channel = {
-          name: 'ORIGINX: Why Was This Changed?',
+          name: 'GitWhisper by ORIGINX: Why Was This Changed?',
           appendLine: (_value: string) => {},
           append: (_value: string) => {},
           clear: () => {},
@@ -70,7 +76,7 @@ export class OutputView {
     const subSeparator = '-'.repeat(80);
 
     channel.appendLine(separator);
-    channel.appendLine('  ORIGINX: WHY WAS THIS CHANGED?');
+    channel.appendLine('  GITWHISPER BY ORIGINX: WHY WAS THIS CHANGED?');
     channel.appendLine(separator);
     channel.appendLine(`File:          ${result.selection.fileName} (${result.selection.filePath})`);
     channel.appendLine(`Lines:         ${result.selection.startLine} - ${result.selection.endLine}`);
@@ -170,6 +176,25 @@ export class OutputView {
       channel.appendLine(subSeparator);
       channel.appendLine(result.uncommittedDiff);
       channel.appendLine('');
+    }
+
+    // Render Neo4j Knowledge Graph Evidence
+    if (result.neo4jEvidence && result.neo4jEvidence.length > 0) {
+      const repoTag = result.neo4jRepositoryId ? ` (${result.neo4jRepositoryId})` : '';
+      channel.appendLine(`[NEO4J KNOWLEDGE GRAPH EVIDENCE${repoTag} — ${result.neo4jEvidence.length} commit(s)]`);
+      channel.appendLine(subSeparator);
+      result.neo4jEvidence.forEach((ge, index) => {
+        const hash = ge.shortHash || (ge.commitHash ? ge.commitHash.slice(0, 7) : 'unknown');
+        const change = ge.oldPath ? `${ge.changeType.toUpperCase()} (from ${ge.oldPath})` : ge.changeType.toUpperCase();
+        const author = ge.authorEmail ? `${ge.authorName} <${ge.authorEmail}>` : ge.authorName;
+        channel.appendLine(`[Graph Commit ${index + 1}/${result.neo4jEvidence!.length}] ${hash} | Change: ${change} | ${ge.subject}`);
+        channel.appendLine(`Author: ${author}`);
+        channel.appendLine(`Date:   ${ge.committedAt}`);
+        if (ge.body && ge.body.trim()) {
+          channel.appendLine(`Message:\n${ge.body.split('\n').map((l) => '  ' + l).join('\n')}`);
+        }
+        channel.appendLine('');
+      });
     }
 
     if (result.commits.length === 0) {
@@ -339,6 +364,164 @@ export class OutputView {
       channel.appendLine('');
     }
 
+    channel.show(true);
+  }
+
+  public static showGraphImportSummary(summary: GraphImportSummary): void {
+    const channel = this.getChannel();
+    const separator = '='.repeat(52);
+    const subSeparator = '-'.repeat(52);
+    channel.appendLine(separator);
+    channel.appendLine('ORIGINX — Neo4j Evidence Graph Import');
+    channel.appendLine(separator);
+    channel.appendLine(`Status                : ${summary.status.toUpperCase()}`);
+    channel.appendLine(`Repository            : ${summary.repositoryName} (${summary.repositoryId})`);
+    channel.appendLine('');
+    channel.appendLine('[IMPORT PROCESSING]');
+    channel.appendLine(subSeparator);
+    channel.appendLine(`Commits Processed     : ${summary.commitsProcessed}`);
+    channel.appendLine(`Files Processed       : ${summary.filesProcessed}`);
+    channel.appendLine(`File Changes          : ${summary.fileChangesProcessed}`);
+    channel.appendLine('');
+    channel.appendLine('[VERIFIED REPOSITORY GRAPH COUNTS]');
+    channel.appendLine(subSeparator);
+    channel.appendLine(`Repository Commits    : ${summary.databaseCommitCount}`);
+    channel.appendLine(`Repository Files      : ${summary.databaseFileCount}`);
+    channel.appendLine(`Code Modifications    : ${summary.databaseModificationCount}`);
+    channel.appendLine('');
+    channel.appendLine(`Duration              : ${(summary.durationMs / 1000).toFixed(2)}s`);
+
+    if (summary.error) {
+      channel.appendLine(`Error                 : ${summary.error}`);
+    }
+
+    channel.appendLine(separator);
+    channel.appendLine('');
+    channel.show(true);
+  }
+
+  public static showGraphInspectionSummary(summary: GraphInspectionSummary): void {
+    const channel = this.getChannel();
+    const separator = '='.repeat(52);
+    const subSeparator = '-'.repeat(52);
+    channel.appendLine(separator);
+    channel.appendLine('ORIGINX — Neo4j Evidence Graph Inspection');
+    channel.appendLine(separator);
+    channel.appendLine(`Status                : ${summary.connected ? 'CONNECTED' : 'DISCONNECTED'}`);
+    channel.appendLine(`Duration              : ${(summary.durationMs / 1000).toFixed(2)}s`);
+
+    if (summary.error) {
+      channel.appendLine(`Error                 : ${summary.error}`);
+    }
+
+    if (summary.repositoryScoped) {
+      const scope = summary.repositoryScoped;
+      channel.appendLine('');
+      channel.appendLine(`[REPOSITORY SCOPED EVIDENCE: ${scope.repoName}]`);
+      channel.appendLine(subSeparator);
+      channel.appendLine(`Repository ID         : ${scope.repoId}`);
+      channel.appendLine(`Commits Tracked       : ${scope.commitCount}`);
+      channel.appendLine(`Files Tracked         : ${scope.fileCount}`);
+      channel.appendLine(`Contributors (People) : ${scope.personCount}`);
+      channel.appendLine(`Code Modifications    : ${scope.modificationCount}`);
+
+      if (scope.topModifiedFiles && scope.topModifiedFiles.length > 0) {
+        channel.appendLine('');
+        channel.appendLine('  Top Modified Files:');
+        for (let i = 0; i < scope.topModifiedFiles.length; i++) {
+          const item = scope.topModifiedFiles[i];
+          channel.appendLine(`    ${i + 1}. ${item.path} (${item.modificationCount} changes)`);
+        }
+      }
+
+      if (scope.latestCommits && scope.latestCommits.length > 0) {
+        channel.appendLine('');
+        channel.appendLine('  Recent Commits:');
+        for (const c of scope.latestCommits) {
+          channel.appendLine(`    - [${c.hash}] ${c.subject} (${c.author}, ${c.date})`);
+        }
+      }
+    }
+
+    channel.appendLine('');
+    channel.appendLine('[GLOBAL DATABASE TOTALS (All Repositories)]');
+    channel.appendLine(subSeparator);
+    channel.appendLine(`Repositories Ingested : ${summary.globalDatabase.totalRepositories}`);
+    channel.appendLine(`Total Commits         : ${summary.globalDatabase.totalCommits}`);
+    channel.appendLine(`Total Files           : ${summary.globalDatabase.totalFiles}`);
+    channel.appendLine(`Total Persons         : ${summary.globalDatabase.totalPersons}`);
+    channel.appendLine(`Total Modifications   : ${summary.globalDatabase.totalModifications}`);
+
+    channel.appendLine(separator);
+    channel.appendLine('');
+    channel.show(true);
+  }
+
+  public static showGraphPruneSummary(result: RepositoryPruneResult): void {
+    const channel = this.getChannel();
+    const separator = '='.repeat(52);
+    channel.appendLine(separator);
+    channel.appendLine('ORIGINX — Neo4j Repository Graph Cleanup');
+    channel.appendLine(separator);
+    channel.appendLine(`Status                : ${result.status.toUpperCase()}`);
+    channel.appendLine(`Repository            : ${result.repoName} (${result.repoId})`);
+    channel.appendLine(`Commits Pruned        : ${result.deletedCommits}`);
+    channel.appendLine(`Files Pruned          : ${result.deletedFiles}`);
+    channel.appendLine(`Duration              : ${(result.durationMs / 1000).toFixed(2)}s`);
+
+    if (result.error) {
+      channel.appendLine(`Error                 : ${result.error}`);
+    }
+
+    channel.appendLine(separator);
+    channel.appendLine('');
+    channel.show(true);
+  }
+
+  public static showFileEvidence(result: Neo4jFileEvidenceResult): void {
+    const channel = this.getChannel();
+    const separator = '='.repeat(52);
+    const subSeparator = '-'.repeat(52);
+    channel.appendLine(separator);
+    channel.appendLine('ORIGINX — Neo4j Historical File Evidence');
+    channel.appendLine(separator);
+    channel.appendLine(`Status                : ${result.status.toUpperCase()}`);
+    channel.appendLine(`Repository            : ${result.repositoryId}`);
+    channel.appendLine(`File                  : ${result.filePath}`);
+    channel.appendLine(`Commits Retrieved     : ${result.commits.length}`);
+    channel.appendLine(`Duration              : ${(result.durationMs / 1000).toFixed(2)}s`);
+
+    if (result.error) {
+      channel.appendLine(`Error                 : ${result.error}`);
+    }
+
+    channel.appendLine(subSeparator);
+
+    if (result.commits.length === 0) {
+      channel.appendLine('No historical commit evidence found in Neo4j for this file.');
+    } else {
+      channel.appendLine('Historical Commits (Newest First):');
+      for (let i = 0; i < result.commits.length; i++) {
+        const c = result.commits[i];
+        channel.appendLine('');
+        const authorStr = c.authorEmail ? `${c.authorName} <${c.authorEmail}>` : c.authorName;
+        const changeStr = c.oldPath ? `${c.changeType.toUpperCase()} (from ${c.oldPath})` : c.changeType.toUpperCase();
+        channel.appendLine(`[${i + 1}] Commit: ${c.shortHash || c.commitHash} | Change: ${changeStr}`);
+        channel.appendLine(`    Author : ${authorStr}`);
+        channel.appendLine(`    Date   : ${c.committedAt}`);
+        channel.appendLine(`    Subject: ${c.subject}`);
+        if (c.body && c.body.trim().length > 0) {
+          const bodyLines = c.body.split('\n');
+          channel.appendLine('    Message:');
+          for (const line of bodyLines) {
+            channel.appendLine(`      ${line}`);
+          }
+        }
+      }
+    }
+
+    channel.appendLine(separator);
+    channel.appendLine('');
     channel.show(true);
   }
 

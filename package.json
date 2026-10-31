@@ -1,9 +1,15 @@
 {
   "name": "originx-extension",
-  "displayName": "ORIGINX: Code History Explainer",
-  "description": "Understand why code changed by inspecting Git history and Copilot AI explanations",
+  "displayName": "GitWhisper by ORIGINX",
+  "description": "Understand why code changed with GitWhisper by ORIGINX — evidence-grounded code history explanations combining local Git line evolution, Neo4j knowledge graph provenance, and GitHub Copilot.",
   "version": "0.2.0",
   "publisher": "originx",
+  "license": "MIT",
+  "icon": "assets/originx-icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Harshit-Batra2008/ORIGINX"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -34,6 +40,39 @@
           "type": "boolean",
           "default": true,
           "description": "Show a usage and token estimation confirmation dialog before analyzing multiple files."
+        },
+        "originx.neo4jUri": {
+          "type": "string",
+          "default": "neo4j+s://f46dba8b.databases.neo4j.io",
+          "description": "Connection URI for the Neo4j AuraDB instance (defaults to official project cluster)."
+        },
+        "originx.neo4jUsername": {
+          "type": "string",
+          "default": "f46dba8b",
+          "description": "Username for Neo4j database authentication (defaults to f46dba8b for project AuraDB)."
+        },
+        "originx.neo4jDatabase": {
+          "type": "string",
+          "default": "",
+          "description": "Target Neo4j database name (leave empty for default AuraDB database)."
+        },
+        "originx.neo4jExcludedDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "node_modules",
+            "dist",
+            "build",
+            "out",
+            "coverage",
+            ".next",
+            ".venv",
+            "__pycache__",
+            ".git"
+          ],
+          "description": "Directory names to exclude from Neo4j evidence graph ingestion anywhere in the path (e.g. node_modules, dist, build, coverage)."
         }
       }
     },
@@ -65,6 +104,26 @@
       {
         "command": "originx.inspectPayload",
         "title": "ORIGINX: Inspect Outgoing AI Payload"
+      },
+      {
+        "command": "originx.importGitGraph",
+        "title": "ORIGINX: Import Git History to Neo4j Knowledge Graph"
+      },
+      {
+        "command": "originx.inspectGitGraph",
+        "title": "ORIGINX: Inspect Neo4j Evidence Graph"
+      },
+      {
+        "command": "originx.pruneGitGraph",
+        "title": "ORIGINX: Clean Up Repository Subgraph in Neo4j"
+      },
+      {
+        "command": "originx.retrieveFileEvidence",
+        "title": "ORIGINX: Retrieve Neo4j Evidence for Active File"
+      },
+      {
+        "command": "originx.manageNeo4jCredentials",
+        "title": "ORIGINX: Manage Neo4j Database Credentials"
       }
     ],
     "menus": {
@@ -101,6 +160,26 @@
         {
           "command": "originx.inspectPayload",
           "when": "false"
+        },
+        {
+          "command": "originx.importGitGraph",
+          "when": "false"
+        },
+        {
+          "command": "originx.inspectGitGraph",
+          "when": "false"
+        },
+        {
+          "command": "originx.pruneGitGraph",
+          "when": "false"
+        },
+        {
+          "command": "originx.retrieveFileEvidence",
+          "when": "false"
+        },
+        {
+          "command": "originx.manageNeo4jCredentials",
+          "when": "false"
         }
       ]
     },
@@ -117,11 +196,15 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node ./out/test/runTests.js"
+    "test": "npm run compile && node ./out/test/runTests.js",
+    "test:neo4j": "npm run compile && node ./scripts/test-neo4j.js"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "neo4j-driver": "^6.2.0"
   }
 }

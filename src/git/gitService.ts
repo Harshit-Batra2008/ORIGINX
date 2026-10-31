@@ -290,8 +290,8 @@ export function parseGitLogOutput(raw: string): CommitInfo[] {
     const authorName = authorMatch ? authorMatch[1].trim() : 'Unknown';
     const authorEmail = authorMatch && authorMatch[2] ? authorMatch[2].trim() : '';
 
-    // Extract Date
-    const dateMatch = block.match(/^Date:\s+(.+)$/m);
+    // Extract Date (supports standard Date: and fuller AuthorDate:)
+    const dateMatch = block.match(/^(?:Date|AuthorDate):\s+(.+)$/m);
     const date = dateMatch ? dateMatch[1].trim() : '';
 
     // Separate commit message from the diff
@@ -311,18 +311,15 @@ export function parseGitLogOutput(raw: string): CommitInfo[] {
     const contentLines: string[] = [];
     let pastHeaders = false;
 
+    const gitHeaderRegex = /^(?:commit\s+[0-9a-f]{40}|Author:\s+|AuthorDate:\s+|Commit:\s+|CommitDate:\s+|Date:\s+|Merge:\s+|gpg:\s+|parent\s+|tree\s+)/i;
+
     for (const line of lines) {
       if (!pastHeaders) {
-        if (
-          line.startsWith('commit ') ||
-          line.startsWith('Author:') ||
-          line.startsWith('Date:') ||
-          line.startsWith('Merge:')
-        ) {
-          continue;
-        }
         if (line.trim() === '') {
           pastHeaders = true;
+          continue;
+        }
+        if (gitHeaderRegex.test(line)) {
           continue;
         }
       }
@@ -337,6 +334,11 @@ export function parseGitLogOutput(raw: string): CommitInfo[] {
     if (firstLineBreak !== -1) {
       subject = fullMessage.substring(0, firstLineBreak).trim();
       body = fullMessage.substring(firstLineBreak + 1).trim();
+    }
+
+    // Clean subject: ensure Git header metadata is never mistaken for a commit message
+    if (gitHeaderRegex.test(subject) || /^(?:AuthorDate|CommitDate|Author|Commit|Date):/i.test(subject)) {
+      subject = '';
     }
 
     commits.push({
