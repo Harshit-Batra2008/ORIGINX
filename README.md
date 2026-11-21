@@ -7,8 +7,10 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
 [![VS Code](https://img.shields.io/badge/VS%20Code-^1.85.0-007ACC.svg)](https://code.visualstudio.com/)
 [![Neo4j](https://img.shields.io/badge/Neo4j-AuraDB-008CC1.svg)](https://neo4j.com/cloud/platform/aura-graph-database/)
-[![Tests](https://img.shields.io/badge/Tests-169%20Passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-214%20Passed-brightgreen.svg)]()
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+![GitWhisper by ORIGINX — Why The Code Is Like This](https://raw.githubusercontent.com/Harshit-Batra2008/ORIGINX/main/assets/originx-marketplace-preview.png)
 
 ---
 
@@ -21,9 +23,6 @@ Software engineering often answers *what* code does through comments and syntax,
 2. **Neo4j Knowledge Graph Provenance**: Cross-references repository-level file modifications, commit relationships, and author networks stored in Neo4j AuraDB.
 3. **Copilot-Native AI Synthesis**: Synthesizes verified change narratives using VS Code's native Language Model API (`vscode.lm`), strictly distinguishing verified facts from plausible inferences and stating `"Original reason unknown"` when documentation is missing.
 4. **Zero Third-Party Cloud Keys**: Operates entirely with native GitHub Copilot chat models (`gpt-4o`, `gpt-4o-mini`, `claude`) and local Git execution. No credit cards, external Gemini/OpenAI API keys, or leaked credentials.
-
-![ORIGINX Preview](assets/originx-preview.png)
-*Figure 1: GitWhisper by ORIGINX visual concept and design preview (illustrative design preview representing the UI architecture, evidence tabs, and reasoning labels; actual extension uses native VS Code theme integration).*
 
 ---
 
@@ -112,32 +111,44 @@ Large language models are prone to hallucinating plausible-sounding reasons for 
 
 ## Key Features & User Interface
 
-### 1. Line-Level Code Inspection
-Select any block of code, right-click, and select **`ORIGINX: Why Was This Changed?`** (or press `Ctrl+Alt+H` / `Cmd+Alt+H`).
-- Displays a dedicated, VS Code-themed Webview beside your code.
-- Summarizes the change rationale with badges indicating the model (`copilot/gpt-4o-mini`) and Neo4j grounding status.
-- Collapsible detailed evidence view showing full unified diffs, authors, timestamps, and full 40-character commit hashes.
+### 1. Unified Code Analysis (`Ctrl+O, Ctrl+X`) — PRIMARY ACTION
+Select any block of code, press `Ctrl+O` followed immediately by `Ctrl+X` (or right-click and select **`GitWhisper: Analyze Code`**).
+- **Five Dedicated Tabs**:
+  - **Overview**: High-level explanation of code purpose, historical evolution, and uncertainty bounds.
+  - **History & Evidence**: Direct Git blame commits, diff hunks, and Neo4j Knowledge Graph history.
+  - **Bugs & Diagnostics**: Real-time language server compiler diagnostics, severity tags, and bug overlap detection.
+  - **Related Files & Impact**: Historically coupled companion files identified through Neo4j co-change retrieval to prevent regression blast radiuses.
+  - **Suggestions & Fixes**: Advisory patch recommendations explicitly labeled `[UNVERIFIED - SUGGESTED FIX]` with one-click "Copy Fix".
 
-### 2. Multi-File History & Cross-File Reasoning
-Select multiple files in the Explorer tree, right-click, and select **`ORIGINX: Why Were These Changed?`**.
-- Inspects change history across multiple files simultaneously.
-- Provides a cross-file relationship overview and individual per-file breakdowns.
-- Features a themed confirmation modal estimating token usage and file eligibility.
+### 2. Review Working Tree Changes (`originx.reviewWorkingTree`)
+Inspect staged and unstaged working tree modifications with automatic Neo4j co-change companion detection:
+- Highlights files that historically change together with your currently modified files.
+- Generates structured reviewer summaries with verification checklists before committing.
 
-### 3. GitWhisper Command Center (`Ctrl+Shift+P` -> `ORIGINX: Command Center`)
-To maintain a clutter-free Command Palette, GitWhisper by ORIGINX exposes a centralized QuickPick action hub:
-- **GENERAL**:
-  - `Explain Selected Code`
-  - `Explain Multiple Selected Files`
-  - `Enable Automatic AI Analysis` / `Disable Automatic AI Analysis`
+### 3. Investigate Bug (`originx.investigateBug`)
+Diagnose tricky regressions with evidence-grounded causality:
+- Accepts selected problematic code and an optional developer error message.
+- Combines local diagnostics, Git diffs, and Neo4j co-changes into root-cause hypotheses and advisory fixes.
+
+### 4. Focused Line Inspection & Multi-File Archaeology
+Historical archaeology workflows remain accessible under the secondary Command Center section:
+- **`ORIGINX: Why Was This Changed?`** (`Ctrl+Alt+H` / `Cmd+Alt+H`): Instant line-level blame and AI causality.
+- **`ORIGINX: Why Were These Changed?`**: Multi-file explorer history and cross-file reasoning with token estimation.
+
+### 5. GitWhisper Command Center (`Ctrl+Shift+P` -> `GitWhisper: Command Center`)
+To maintain a clutter-free Command Palette, GitWhisper exposes a centralized QuickPick action hub:
+- **PRIMARY ACTIONS**:
+  - `GitWhisper: Analyze Code` (Ctrl+O, Ctrl+X)
+  - `GitWhisper: Review Working Tree Changes`
+  - `GitWhisper: Investigate Bug`
+- **FOCUSED HISTORY ANALYSIS**:
+  - `Explain Selected Code` (Why Was This Changed?)
+  - `Explain Multiple Selected Files` (Why Were These Changed?)
+- **DEVELOPER TOOLS & SETTINGS**:
+  - `Enable / Disable Automatic AI Analysis`
   - `List Available AI Models`
-  - `Import Git History to Neo4j Knowledge Graph`
-  - `Inspect Neo4j Evidence Graph`
-  - `Clean Up Repository Subgraph in Neo4j`
-- **DEVELOPER TOOLS**:
   - `Inspect Outgoing AI Payload` (inspect JSON payload in side editor without sending)
-  - `View Technical Diagnostics`
-  - `Open ORIGINX Output Channel`
+  - `View Technical Diagnostics` & `Open Output Channel`
   - `Manage Neo4j Database Credentials`
 
 ---
@@ -161,10 +172,10 @@ All options can be configured in VS Code Settings (`Ctrl+,` -> search `originx`)
 ## Installation & Setup
 
 ### Option A: Install from VSIX Package (Recommended for Judges)
-1. Download the pre-built `originx-extension-0.2.0.vsix` package.
+1. Download the pre-built `originx-extension-0.3.1.vsix` package.
 2. In VS Code, open the Extensions view (`Ctrl+Shift+X` or `Cmd+Shift+X`).
 3. Click the **`...`** (Views and More Actions) menu in the top right of the Extensions pane.
-4. Select **Install from VSIX...** and choose `originx-extension-0.2.0.vsix`.
+4. Select **Install from VSIX...** and choose `originx-extension-0.3.1.vsix`.
 5. Ensure GitHub Copilot or GitHub Copilot Chat is installed and active in VS Code.
 
 ### Option B: Build & Run from Source
@@ -188,7 +199,7 @@ All options can be configured in VS Code Settings (`Ctrl+,` -> search `originx`)
    ```bash
    npm test
    ```
-   *(All 165 tests run completely offline without requiring network access or database credentials.)*
+   *(All 214 tests run completely offline without requiring network access or database credentials.)*
 
 ---
 
@@ -201,28 +212,30 @@ Follow these simple steps for a live demonstration:
    - Press **`F5`** (or Run -> Start Debugging). An `[Extension Development Host]` window will open.
 
 2. **Configure AI & Neo4j (First-time setup)**:
-   - In the Extension Development Host window, press `Ctrl+Shift+P` -> select **`ORIGINX: Command Center`**.
+   - In the Extension Development Host window, press `Ctrl+Shift+P` -> select **`GitWhisper: Command Center`**.
    - Choose **`Enable Automatic AI Analysis`** (allows Copilot LM queries on code selection).
    - Choose **`Manage Neo4j Database Credentials`** -> **`Test Neo4j Connection`** (or enter password if prompted; credentials are saved in VS Code's encrypted SecretStorage).
 
-3. **Demo Scenario 1: Why Was This Changed?**:
-   - Open any source file in a Git repository (e.g. `src/main.jsx` or `README.md`).
+3. **Demo Scenario 1: Unified Code Analysis (Main Action)**:
+   - Open any source file in a Git repository (e.g. `package.json` or `src/extension.ts`).
    - Select 2–10 lines of code.
-   - Right-click and choose **`ORIGINX: Why Was This Changed?`** (or press `Ctrl+Alt+H`).
-   - Observe the Webview side panel displaying:
-     - The AI explanation with `[Verified]` and `[Inferred]` rationale.
-     - The supporting evidence summary: e.g., *“Supporting Evidence Records (9) — 5 Unique Commits”*.
-     - Collapsible code snippet and detailed diff sections.
+   - Press `Ctrl+O`, then `Ctrl+X` (or right-click and choose **`GitWhisper: Analyze Code`**).
+   - Explore all 5 tabs: Overview, History & Evidence, Bugs & Diagnostics, Related Files & Impact, and Suggestions & Fixes.
 
-4. **Demo Scenario 2: Offline Resilience (No AI / No Database)**:
-   - Run `ORIGINX: Command Center` -> choose **`Disable Automatic AI Analysis`**.
-   - Select code and run `ORIGINX: Why Was This Changed?`.
+4. **Demo Scenario 2: Review Working Tree Changes**:
+   - Make an unstaged modification in a tracked file.
+   - Run Command Center -> select **`GitWhisper: Review Working Tree Changes`**.
+   - Observe working tree diffs accompanied by coupled companion files from Neo4j co-change history.
+
+5. **Demo Scenario 3: Investigate Bug**:
+   - Select suspicious code lines.
+   - Run **`GitWhisper: Investigate Bug`** and optionally supply an error symptom.
+   - Review observed facts, hypotheses, and an advisory suggested patch marked `[UNVERIFIED - SUGGESTED FIX]`.
+
+6. **Demo Scenario 4: Offline Resilience (No AI / No Database)**:
+   - Run Command Center -> choose **`Disable Automatic AI Analysis`**.
+   - Select code and run **`GitWhisper: Analyze Code`**.
    - Observe that full local Git history, diffs, authors, and commit messages render instantly without sending data over the network.
-
-5. **Demo Scenario 3: Inspect AI Payload (Privacy & Transparency)**:
-   - Select code in an editor.
-   - Open Command Center -> choose **`Inspect Outgoing AI Payload`**.
-   - View the sanitized JSON payload (with system prompts, Git diffs, and Neo4j graph records) rendered in a side editor without transmitting any data.
 
 ---
 
@@ -231,15 +244,16 @@ Follow these simple steps for a live demonstration:
 ORIGINX includes a comprehensive, 100% offline test suite validating all core subsystems:
 - **Git Engine**: Standard & porcelain log parsing, line tracking, empty repositories, untracked files, uncommitted changes.
 - **Security & Privacy**: Private key detection, AWS key redaction, PAT redaction, SecretStorage purge migrations, payload sanitization.
-- **AI Explainer & Prompts**: Prompt injection defenses, 4-section parsing, hallucinated hash detection, compact prompt bounds (<350 tokens).
+- **AI Explainer & Prompts**: Prompt injection defenses, multi-section parsing, hallucinated hash detection, compact prompt bounds (<350 tokens).
 - **VS Code Language Model Client**: Model discovery, error category mappings, token cancellations, streaming response assembly.
-- **Multi-File Reasoning**: Binary buffer detection, eligible file filters, cross-file prompt building, confirmation modal behaviors.
-- **Neo4j Knowledge Graph**: Path normalization, name-status parsing, repository namespacing, idempotent MERGE queries, repository-scoped evidence retrieval, and exclusivity-guarded graph pruning.
-- **Evidence Deduplication**: Canonical full-hash deduplication, prefix matching, and Webview count summaries.
+- **Reviewer & Co-Change Engine**: Working-tree change aggregation, Neo4j co-change graph retrieval, blast radius detection.
+- **Bug Investigation Engine**: Diagnostics extraction, line mapping, symptom incorporation, unverified fix safeguards.
+- **Unified Analysis Engine**: Unified evidence gathering, 5-tab webview rendering, safe HTML escaping, fallback error rendering.
+- **Neo4j Knowledge Graph**: Path normalization, name-status parsing, repository namespacing, idempotent MERGE queries, repository-scoped evidence retrieval.
 
 ```text
 ====================================================
-Test Results: 165 passed, 0 failed
+Test Results: 214 passed, 0 failed
 ====================================================
 ```
 

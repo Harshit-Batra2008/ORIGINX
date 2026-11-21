@@ -2,7 +2,7 @@
   "name": "originx-extension",
   "displayName": "GitWhisper by ORIGINX",
   "description": "Understand why code changed with GitWhisper by ORIGINX — evidence-grounded code history explanations combining local Git line evolution, Neo4j knowledge graph provenance, and GitHub Copilot.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "originx",
   "license": "MIT",
   "icon": "assets/originx-icon.png",
