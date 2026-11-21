@@ -19,9 +19,18 @@ import {
   resolveRepositoryIdentity
 } from './neo4j/neo4jGraphImporter';
 import { inspectGraphEvidence } from './neo4j/neo4jGraphInspector';
-import { retrieveFileEvidence } from './neo4j/neo4jEvidenceRetriever';
+import { retrieveFileEvidence, retrieveCoChangedFiles } from './neo4j/neo4jEvidenceRetriever';
 import { Neo4jCommitEvidence } from './neo4j/neo4jGraphTypes';
 import { closeNeo4jDriver, createNeo4jDriver, resolveNeo4jConfig, verifyConnection } from './neo4j/neo4jService';
+import { ReviewerExplainer } from './reviewer/reviewerExplainer';
+import { aggregateCoChangeEvidence, gatherWorkingTreeChanges } from './reviewer/reviewerService';
+import { ReviewerCoChangeGroup, ReviewerExplanation, ReviewerResult } from './reviewer/reviewerTypes';
+import { InvestigationExplainer } from './investigation/investigationExplainer';
+import { assembleInvestigationEvidence, collectDiagnosticsForDocument } from './investigation/investigationService';
+import { InvestigationExplanation, InvestigationRequest, InvestigationResult } from './investigation/investigationTypes';
+import { UnifiedExplainer } from './unified/unifiedExplainer';
+import { gatherUnifiedEvidence } from './unified/unifiedService';
+import { UnifiedAnalysisRequest, UnifiedAnalysisResult } from './unified/unifiedTypes';
 import { migrateAndPurgeLegacySecrets, SecretManager } from './security/secretManager';
 import { showCommandCenter } from './ui/commandCenter';
 import { OutputView } from './ui/outputView';
@@ -642,6 +651,619 @@ export function activate(context: vscode.ExtensionContext) {
       }
     );
 
+    // Command: GitWhisper: Analyze Code (Finale - Unified Code Analysis)
+    const analyzeCodeDisposable = vscode.commands.registerCommand(
+      'originx.analyzeCode',
+      async (clickedUri?: vscode.Uri) => {
+        try {
+          const startTime = Date.now();
+          let targetPath: string | undefined = clickedUri?.fsPath;
+          const activeEditor = vscode.window.activeTextEditor;
+
+          if (!targetPath && activeEditor?.document.uri.scheme === 'file') {
+            targetPath = activeEditor.document.uri.fsPath;
+          }
+          if (!targetPath && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+            targetPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+          }
+
+          if (!targetPath) {
+            vscode.window.showWarningMessage('GitWhisper: Please open a code file in the editor to analyze code.');
+            return;
+          }
+
+          // 1. Determine line range and selected code
+          let startLine = 1;
+          let endLine = 1;
+          let selectedCode = '';
+
+          if (activeEditor && activeEditor.document.uri.fsPath === targetPath) {
+            const sel = activeEditor.selection;
+            if (!sel.isEmpty) {
+              startLine = sel.start.line + 1;
+              endLine = sel.end.line + 1;
+              selectedCode = activeEditor.document.getText(sel);
+            } else {
+              startLine = sel.active.line + 1;
+              endLine = sel.active.line + 1;
+              selectedCode = activeEditor.document.lineAt(sel.active.line).text;
+            }
+          } else {
+            try {
+              const fs = require('fs');
+              const content = fs.readFileSync(targetPath, 'utf8');
+              const lines = content.split(/\r?\n/);
+              startLine = 1;
+              endLine = Math.min(lines.length, 50);
+              selectedCode = lines.slice(0, 50).join('\n');
+            } catch {
+              selectedCode = '';
+            }
+          }
+
+          // 2. Resolve repository and target file
+          const repoRoot = await findRepoRoot(targetPath);
+          if (!repoRoot) {
+            vscode.window.showWarningMessage(`GitWhisper: File "${path.basename(targetPath)}" is not inside a Git repository.`);
+            WebviewView.showUnifiedAnalysisResult({
+              status: 'not_a_repo',
+              explanationStatus: 'disabled',
+              durationMs: Date.now() - startTime
+            }, context.extensionUri);
+            return;
+          }
+
+          const repoInfo = await resolveRepositoryIdentity(repoRoot);
+          const relativePath = path.relative(repoRoot, targetPath).replace(/\\/g, '/');
+          const fileName = path.basename(targetPath);
+
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: `GitWhisper: Analyzing code in ${fileName}...`,
+              cancellable: true
+            },
+            async (_progress, token) => {
+              if (token.isCancellationRequested) return;
+
+              // 3. Connect to Neo4j read-only if configured
+              let neo4jDriver: any = undefined;
+              try {
+                const secretManager = new SecretManager(context.secrets);
+                const storedPassword = await secretManager.getNeo4jPassword();
+                const activePassword =
+                  (process.env.NEO4J_PASSWORD && process.env.NEO4J_PASSWORD.trim()) ||
+                  (storedPassword && storedPassword.trim());
+
+                if (activePassword) {
+                  const authConfig = resolveNeo4jConfig({ password: activePassword });
+                  neo4jDriver = createNeo4jDriver(authConfig);
+                }
+              } catch (driverErr) {
+                console.warn('[GitWhisper] Neo4j connection initialization skipped:', driverErr);
+              }
+
+              let evidenceBundle;
+              try {
+                const analysisReq: UnifiedAnalysisRequest = {
+                  filePath: relativePath,
+                  fileName,
+                  startLine,
+                  endLine,
+                  selectedCode,
+                  repoRoot,
+                  repoId: repoInfo.id,
+                  repoName: repoInfo.name
+                };
+
+                evidenceBundle = await gatherUnifiedEvidence(analysisReq, {
+                  cancellationToken: token,
+                  neo4jDriver
+                });
+              } finally {
+                if (neo4jDriver) {
+                  await neo4jDriver.close().catch(() => {});
+                }
+              }
+
+              if (token.isCancellationRequested) {
+                OutputView.getChannel().appendLine('[GitWhisper] Code analysis cancelled by user.');
+                return;
+              }
+
+              // 4. AI synthesis using VS Code Language Model (Copilot) with local evidence fallback
+              let explanationStatus: 'ok' | 'disabled' | 'no_model' | 'blocked_security' | 'failed' | 'cancelled' = 'disabled';
+              let explanation;
+              let explanationError: string | undefined = undefined;
+              let explanationDiagnostics: any = undefined;
+
+              try {
+                const models = await getAvailableVsCodeModels();
+                if (models.length > 0) {
+                  const activeModel = models[0];
+                  const explainer = new UnifiedExplainer();
+
+                  const expRes = await explainer.analyzeCode(evidenceBundle, {
+                    cancellationToken: token,
+                    lmModelInstance: activeModel
+                  });
+
+                  explanationStatus = expRes.status;
+                  explanation = expRes.explanation;
+                  explanationError = expRes.error;
+                  explanationDiagnostics = expRes.diagnostics;
+
+                  if (expRes.status === 'blocked_security') {
+                    vscode.window.showErrorMessage(`GitWhisper Security Block: ${expRes.error}`);
+                  } else if (expRes.status === 'no_model') {
+                    vscode.window.showWarningMessage('GitWhisper: No language models available via VS Code Language Model API. Showing local Git and diagnostic evidence.');
+                  } else if (expRes.status === 'failed') {
+                    vscode.window.showWarningMessage(`GitWhisper AI Error: ${expRes.error}. Local Git and diagnostic evidence preserved.`);
+                  }
+                } else {
+                  // Fall back to local Git & diagnostics when AI is unavailable
+                  explanationStatus = 'no_model';
+                  explanationError = 'No language models available via VS Code Language Model API. Showing local Git history and VS Code diagnostics.';
+                }
+              } catch (lmErr) {
+                explanationStatus = 'failed';
+                explanationError = lmErr instanceof Error ? lmErr.message : String(lmErr);
+                console.warn('[GitWhisper] AI synthesis error, falling back to local evidence:', explanationError);
+              }
+
+              // 5. Map overall status
+              let overallStatus: 'ok' | 'no_git' | 'not_a_repo' | 'untracked_file' | 'empty_repo' | 'no_history' | 'error' = 'ok';
+              if (evidenceBundle.gitHistory.status === 'no_git') overallStatus = 'no_git';
+              else if (evidenceBundle.gitHistory.status === 'not_a_repo') overallStatus = 'not_a_repo';
+              else if (evidenceBundle.gitHistory.status === 'untracked_file') overallStatus = 'untracked_file';
+              else if (evidenceBundle.gitHistory.status === 'empty_repo') overallStatus = 'empty_repo';
+              else if (evidenceBundle.gitHistory.status === 'no_history_for_selection') overallStatus = 'no_history';
+
+              const result: UnifiedAnalysisResult = {
+                status: overallStatus,
+                request: evidenceBundle.request,
+                evidence: evidenceBundle,
+                explanationStatus,
+                explanation,
+                explanationError,
+                explanationDiagnostics,
+                durationMs: Date.now() - startTime
+              };
+
+              // 6. Present results to Output Channel and Webview
+              OutputView.showUnifiedAnalysisSummary(result);
+              WebviewView.showUnifiedAnalysisResult(result, context.extensionUri);
+
+              const diagCount = evidenceBundle.diagnostics.length;
+              const commitCount = evidenceBundle.gitHistory?.commits?.length || 0;
+              const coCount = evidenceBundle.neo4jCoChanges.length;
+              vscode.window.setStatusBarMessage(
+                `GitWhisper: Analyzed ${fileName} (${commitCount} commit(s), ${diagCount} diagnostic(s), ${coCount} Neo4j companion(s))`,
+                4000
+              );
+            }
+          );
+        } catch (err: any) {
+          const rawMsg = err instanceof Error ? err.message : String(err);
+          vscode.window.showErrorMessage(`GitWhisper Code Analysis Error: ${redactSecret(rawMsg)}`);
+        }
+      }
+    );
+
+    // Command: GitWhisper: Review Working Tree Changes (Phase 2 - Code Reviewer Journey)
+    const reviewWorkingTreeDisposable = vscode.commands.registerCommand(
+      'originx.reviewWorkingTree',
+      async (clickedUri?: vscode.Uri) => {
+        try {
+          const startTime = Date.now();
+          let targetPath: string | undefined = clickedUri?.fsPath;
+          if (!targetPath && vscode.window.activeTextEditor?.document.uri.scheme === 'file') {
+            targetPath = vscode.window.activeTextEditor.document.uri.fsPath;
+          }
+          if (!targetPath && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+            targetPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+          }
+
+          if (!targetPath) {
+            vscode.window.showWarningMessage('GitWhisper: Please open a workspace folder or file to review working tree changes.');
+            return;
+          }
+
+          const repoRoot = await findRepoRoot(targetPath);
+          if (!repoRoot) {
+            vscode.window.showWarningMessage('GitWhisper: Current folder is not inside a Git repository.');
+            WebviewView.showReviewerResult({
+              status: 'not_a_repo',
+              changedFiles: [],
+              totalChangedFiles: 0,
+              totalDiffChars: 0,
+              stagedCount: 0,
+              unstagedCount: 0,
+              untrackedCount: 0,
+              neo4jStatus: 'disabled',
+              coChangeEvidence: [],
+              relatedFilesWorthInspecting: [],
+              explanationStatus: 'disabled',
+              durationMs: Date.now() - startTime
+            }, context.extensionUri);
+            return;
+          }
+
+          const repoInfo = await resolveRepositoryIdentity(repoRoot);
+
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: `GitWhisper: Reviewing working tree changes for ${repoInfo.name}...`,
+              cancellable: true
+            },
+            async (_progress, token) => {
+              // 1. Gather real staged, unstaged, and untracked changes
+              const changesRes = await gatherWorkingTreeChanges(repoRoot, { cancellationToken: token });
+
+              if (token.isCancellationRequested || changesRes.isCancelled) {
+                OutputView.getChannel().appendLine('[GitWhisper] Review cancelled during Git working tree inspection.');
+                return;
+              }
+
+              if (changesRes.changedFiles.length === 0) {
+                vscode.window.showInformationMessage('GitWhisper: Working tree clean. No staged or unstaged changes found.');
+                const emptyResult: ReviewerResult = {
+                  status: 'no_changes',
+                  repoRoot,
+                  repoId: repoInfo.id,
+                  repoName: repoInfo.name,
+                  changedFiles: [],
+                  totalChangedFiles: 0,
+                  totalDiffChars: 0,
+                  stagedCount: 0,
+                  unstagedCount: 0,
+                  untrackedCount: 0,
+                  neo4jStatus: 'no_records',
+                  coChangeEvidence: [],
+                  relatedFilesWorthInspecting: [],
+                  explanationStatus: 'empty_diff',
+                  durationMs: Date.now() - startTime
+                };
+                OutputView.showReviewerSummary(emptyResult);
+                WebviewView.showReviewerResult(emptyResult, context.extensionUri);
+                return;
+              }
+
+              // 2. Query historical co-change evidence from Neo4j (non-blocking graceful fallback)
+              let neo4jStatus: 'ok' | 'offline' | 'no_records' | 'disabled' | 'error' = 'disabled';
+              let neo4jError: string | undefined = undefined;
+              const coChangeGroups: ReviewerCoChangeGroup[] = [];
+
+              try {
+                const secretManager = new SecretManager(context.secrets);
+                const storedPassword = await secretManager.getNeo4jPassword();
+                const activePassword =
+                  (process.env.NEO4J_PASSWORD && process.env.NEO4J_PASSWORD.trim()) ||
+                  (storedPassword && storedPassword.trim());
+
+                if (activePassword) {
+                  const authConfig = resolveNeo4jConfig({ password: activePassword });
+                  const driver = createNeo4jDriver(authConfig);
+                  try {
+                    for (const file of changesRes.changedFiles.slice(0, 10)) {
+                      if (token.isCancellationRequested) break;
+                      const coRes = await retrieveCoChangedFiles(driver, repoInfo.id, file.filePath, 10);
+                      if (coRes.status === 'ok' && coRes.coChangedFiles.length > 0) {
+                        coChangeGroups.push({
+                          targetFilePath: file.filePath,
+                          targetFileName: file.fileName,
+                          coChangedFiles: coRes.coChangedFiles
+                        });
+                      }
+                    }
+                    neo4jStatus = coChangeGroups.length > 0 ? 'ok' : 'no_records';
+                  } finally {
+                    await driver.close();
+                  }
+                } else {
+                  neo4jStatus = 'disabled';
+                }
+              } catch (neoErr) {
+                neo4jStatus = 'offline';
+                neo4jError = redactSecret(String(neoErr));
+                console.warn('[GitWhisper] Neo4j co-change retrieval skipped or failed:', neo4jError);
+              }
+
+              const relatedFilesWorthInspecting = aggregateCoChangeEvidence(
+                changesRes.changedFiles,
+                coChangeGroups
+              );
+
+              // 3. Optional AI review synthesis using VS Code Copilot Language Model
+              const isAutoEnabled = vscode.workspace
+                .getConfiguration('originx')
+                .get<boolean>('enableAutomaticAnalysis', false);
+
+              let explanationStatus: 'ok' | 'disabled' | 'no_model' | 'blocked_security' | 'failed' | 'empty_diff' | 'cancelled' = 'disabled';
+              let explanation: ReviewerExplanation | undefined = undefined;
+              let explanationError: string | undefined = undefined;
+              let explanationDiagnostics: any = undefined;
+
+              if (isAutoEnabled) {
+                const reviewerExplainer = new ReviewerExplainer();
+                const models = await getAvailableVsCodeModels();
+                const activeModel = models.length > 0 ? models[0] : undefined;
+
+                const expRes = await reviewerExplainer.explainWorkingTreeChanges(
+                  changesRes.changedFiles,
+                  relatedFilesWorthInspecting,
+                  {
+                    cancellationToken: token,
+                    lmModelInstance: activeModel
+                  }
+                );
+
+                explanationStatus = expRes.status;
+                explanation = expRes.explanation;
+                explanationError = expRes.error;
+                explanationDiagnostics = expRes.diagnostics;
+
+                if (expRes.status === 'blocked_security') {
+                  vscode.window.showErrorMessage(`GitWhisper Security Block: ${expRes.error}`);
+                } else if (expRes.status === 'no_model') {
+                  vscode.window.showWarningMessage('GitWhisper: No language models available via VS Code Language Model API. Ensure GitHub Copilot is installed and active.');
+                } else if (expRes.status === 'failed') {
+                  vscode.window.showWarningMessage(`GitWhisper Review Error: ${expRes.error}. Local Git review preserved.`);
+                }
+              }
+
+              // 4. Construct complete reviewer result
+              const result: ReviewerResult = {
+                status: 'ok',
+                repoRoot,
+                repoId: repoInfo.id,
+                repoName: repoInfo.name,
+                changedFiles: changesRes.changedFiles,
+                totalChangedFiles: changesRes.changedFiles.length,
+                totalDiffChars: changesRes.totalDiffChars,
+                stagedCount: changesRes.stagedCount,
+                unstagedCount: changesRes.unstagedCount,
+                untrackedCount: changesRes.untrackedCount,
+                neo4jStatus,
+                neo4jError,
+                coChangeEvidence: coChangeGroups,
+                relatedFilesWorthInspecting,
+                explanationStatus,
+                explanation,
+                explanationError,
+                explanationDiagnostics,
+                durationMs: Date.now() - startTime
+              };
+
+              // 5. Present to Output Channel and Webview
+              OutputView.showReviewerSummary(result);
+              WebviewView.showReviewerResult(result, context.extensionUri);
+
+              const companionAlert = relatedFilesWorthInspecting.filter((r) => !r.isCurrentlyChanged).length;
+              vscode.window.setStatusBarMessage(
+                `GitWhisper: Reviewed ${result.totalChangedFiles} file(s)${companionAlert > 0 ? ` (${companionAlert} un-modified companion(s) found in Neo4j)` : ''}`,
+                4000
+              );
+            }
+          );
+        } catch (err: any) {
+          const rawMsg = err instanceof Error ? err.message : String(err);
+          vscode.window.showErrorMessage(`GitWhisper Review Error: ${redactSecret(rawMsg)}`);
+        }
+      }
+    );
+
+    // Command: GitWhisper: Investigate Bug (Phase 3 - Evidence-Aware Bug Investigation)
+    const investigateBugDisposable = vscode.commands.registerCommand(
+      'originx.investigateBug',
+      async (clickedUri?: vscode.Uri) => {
+        try {
+          const startTime = Date.now();
+          let targetPath: string | undefined = clickedUri?.fsPath;
+          const activeEditor = vscode.window.activeTextEditor;
+
+          if (!targetPath && activeEditor?.document.uri.scheme === 'file') {
+            targetPath = activeEditor.document.uri.fsPath;
+          }
+          if (!targetPath && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+            targetPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+          }
+
+          if (!targetPath) {
+            vscode.window.showWarningMessage('GitWhisper: Please open a code file in the editor to investigate a bug.');
+            return;
+          }
+
+          // 1. Determine line range and selected code
+          let startLine = 1;
+          let endLine = 1;
+          let selectedCode = '';
+
+          if (activeEditor && activeEditor.document.uri.fsPath === targetPath) {
+            const sel = activeEditor.selection;
+            if (!sel.isEmpty) {
+              startLine = sel.start.line + 1;
+              endLine = sel.end.line + 1;
+              selectedCode = activeEditor.document.getText(sel);
+            } else {
+              startLine = sel.active.line + 1;
+              endLine = sel.active.line + 1;
+              selectedCode = activeEditor.document.lineAt(sel.active.line).text;
+            }
+          } else {
+            try {
+              const fs = require('fs');
+              const content = fs.readFileSync(targetPath, 'utf8');
+              const lines = content.split(/\r?\n/);
+              startLine = 1;
+              endLine = Math.min(lines.length, 50);
+              selectedCode = lines.slice(0, 50).join('\n');
+            } catch {
+              selectedCode = '';
+            }
+          }
+
+          // 2. Prompt developer for optional error message / symptom
+          const userErrorMessage = await vscode.window.showInputBox({
+            title: 'GitWhisper: Investigate Bug',
+            prompt: 'Optional: Enter the error message, exception, or observed bug symptom (press Enter to skip)',
+            placeHolder: 'e.g., TypeError: Cannot read properties of undefined (reading "id")'
+          });
+
+          if (userErrorMessage === undefined) {
+            return; // User cancelled input prompt
+          }
+
+          // 3. Resolve repository and target file
+          const repoRoot = await findRepoRoot(targetPath);
+          if (!repoRoot) {
+            vscode.window.showWarningMessage(`GitWhisper: File "${path.basename(targetPath)}" is not inside a Git repository.`);
+            WebviewView.showInvestigationResult({
+              status: 'not_a_repo',
+              explanationStatus: 'disabled',
+              durationMs: Date.now() - startTime
+            }, context.extensionUri);
+            return;
+          }
+
+          const repoInfo = await resolveRepositoryIdentity(repoRoot);
+          const relativePath = path.relative(repoRoot, targetPath).replace(/\\/g, '/');
+          const fileName = path.basename(targetPath);
+
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: `GitWhisper: Investigating bug in ${fileName}...`,
+              cancellable: true
+            },
+            async (_progress, token) => {
+              if (token.isCancellationRequested) return;
+
+              // 4. Connect to Neo4j read-only if configured
+              let neo4jDriver: any = undefined;
+              try {
+                const secretManager = new SecretManager(context.secrets);
+                const storedPassword = await secretManager.getNeo4jPassword();
+                const activePassword =
+                  (process.env.NEO4J_PASSWORD && process.env.NEO4J_PASSWORD.trim()) ||
+                  (storedPassword && storedPassword.trim());
+
+                if (activePassword) {
+                  const authConfig = resolveNeo4jConfig({ password: activePassword });
+                  neo4jDriver = createNeo4jDriver(authConfig);
+                }
+              } catch (driverErr) {
+                console.warn('[GitWhisper] Neo4j connection initialization skipped:', driverErr);
+              }
+
+              let evidencePackage;
+              try {
+                const investigationReq: InvestigationRequest = {
+                  filePath: relativePath,
+                  fileName,
+                  startLine,
+                  endLine,
+                  selectedCode,
+                  userErrorMessage: userErrorMessage.trim() || undefined,
+                  repoRoot,
+                  repoId: repoInfo.id,
+                  repoName: repoInfo.name
+                };
+
+                evidencePackage = await assembleInvestigationEvidence(investigationReq, {
+                  cancellationToken: token,
+                  neo4jDriver
+                });
+              } finally {
+                if (neo4jDriver) {
+                  await neo4jDriver.close().catch(() => {});
+                }
+              }
+
+              if (token.isCancellationRequested) {
+                OutputView.getChannel().appendLine('[GitWhisper] Bug investigation cancelled by user.');
+                return;
+              }
+
+              // 5. AI synthesis using VS Code Language Model (Copilot) with local evidence fallback
+              let explanationStatus: 'ok' | 'disabled' | 'no_model' | 'blocked_security' | 'failed' | 'cancelled' = 'disabled';
+              let explanation: InvestigationExplanation | undefined = undefined;
+              let explanationError: string | undefined = undefined;
+              let explanationDiagnostics: any = undefined;
+
+              try {
+                const models = await getAvailableVsCodeModels();
+                if (models.length > 0) {
+                  const activeModel = models[0];
+                  const explainer = new InvestigationExplainer();
+
+                  const expRes = await explainer.explainBug(evidencePackage, {
+                    cancellationToken: token,
+                    lmModelInstance: activeModel
+                  });
+
+                  explanationStatus = expRes.status;
+                  explanation = expRes.explanation;
+                  explanationError = expRes.error;
+                  explanationDiagnostics = expRes.diagnostics;
+
+                  if (expRes.status === 'blocked_security') {
+                    vscode.window.showErrorMessage(`GitWhisper Security Block: ${expRes.error}`);
+                  } else if (expRes.status === 'no_model') {
+                    vscode.window.showWarningMessage('GitWhisper: No language models available via VS Code Language Model API. Showing local Git and diagnostic evidence.');
+                  } else if (expRes.status === 'failed') {
+                    vscode.window.showWarningMessage(`GitWhisper AI Error: ${expRes.error}. Local Git and diagnostic evidence preserved.`);
+                  }
+                } else {
+                  // Fall back to local Git & diagnostics when AI is unavailable
+                  explanationStatus = 'no_model';
+                  explanationError = 'No language models available via VS Code Language Model API. Showing local Git history and VS Code diagnostics.';
+                }
+              } catch (lmErr) {
+                explanationStatus = 'failed';
+                explanationError = lmErr instanceof Error ? lmErr.message : String(lmErr);
+                console.warn('[GitWhisper] AI synthesis error, falling back to local evidence:', explanationError);
+              }
+
+              // 6. Map status
+              let overallStatus: 'ok' | 'no_git' | 'not_a_repo' | 'untracked_file' | 'empty_repo' | 'no_history' | 'error' = 'ok';
+              if (evidencePackage.gitHistory.status === 'no_git') overallStatus = 'no_git';
+              else if (evidencePackage.gitHistory.status === 'not_a_repo') overallStatus = 'not_a_repo';
+              else if (evidencePackage.gitHistory.status === 'untracked_file') overallStatus = 'untracked_file';
+              else if (evidencePackage.gitHistory.status === 'empty_repo') overallStatus = 'empty_repo';
+              else if (evidencePackage.gitHistory.status === 'no_history_for_selection') overallStatus = 'no_history';
+
+              const result: InvestigationResult = {
+                status: overallStatus,
+                request: evidencePackage.request,
+                evidence: evidencePackage,
+                explanationStatus,
+                explanation,
+                explanationError,
+                explanationDiagnostics,
+                durationMs: Date.now() - startTime
+              };
+
+              // 7. Present results to Output Channel and Webview
+              OutputView.showInvestigationSummary(result);
+              WebviewView.showInvestigationResult(result, context.extensionUri);
+
+              const diagCount = evidencePackage.diagnostics.length;
+              const coCount = evidencePackage.coChangeEvidence.length;
+              vscode.window.setStatusBarMessage(
+                `GitWhisper: Investigated ${fileName} (${diagCount} diagnostic(s), ${coCount} Neo4j co-change(s))`,
+                4000
+              );
+            }
+          );
+        } catch (err: any) {
+          const rawMsg = err instanceof Error ? err.message : String(err);
+          vscode.window.showErrorMessage(`GitWhisper Bug Investigation Error: ${redactSecret(rawMsg)}`);
+        }
+      }
+    );
+
     // Command: ORIGINX: Import Git History to Neo4j Knowledge Graph (Phase 5B)
     const importGitGraphDisposable = vscode.commands.registerCommand(
       'originx.importGitGraph',
@@ -1078,7 +1700,10 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(
+      analyzeCodeDisposable,
       commandCenterDisposable,
+      reviewWorkingTreeDisposable,
+      investigateBugDisposable,
       listVsCodeModelsDisposable,
       enableAutoDisposable,
       disableAutoDisposable,

@@ -151,3 +151,33 @@ export interface Neo4jFileEvidenceResult {
   durationMs: number;
   error?: string;
 }
+
+export interface Neo4jSharedCommit {
+  hash: string;
+  shortHash: string;
+  subject?: string;
+  committedAt?: string;
+}
+
+export interface Neo4jCoChangeItem {
+  filePath: string;
+  fileName: string;
+  sharedCommitCount: number;
+  sharedCommits: Neo4jSharedCommit[];
+  commitHashes: string[];
+}
+
+export interface Neo4jCoChangeResult {
+  status: 'ok' | 'error';
+  repositoryId: string;
+  targetFilePath: string;
+  coChangedFiles: Neo4jCoChangeItem[];
+  totalCoChangedFiles: number;
+  durationMs: number;
+  error?: string;
+}
+
+export interface Neo4jCoChangeOptions {
+  limit?: number;
+  maxSharedCommitsPerFile?: number;
+}

@@ -78,8 +78,20 @@
     },
     "commands": [
       {
+        "command": "originx.analyzeCode",
+        "title": "GitWhisper: Analyze Code"
+      },
+      {
         "command": "originx.whyWasThisChanged",
         "title": "ORIGINX: Why Was This Changed?"
+      },
+      {
+        "command": "originx.reviewWorkingTree",
+        "title": "GitWhisper: Review Working Tree Changes"
+      },
+      {
+        "command": "originx.investigateBug",
+        "title": "GitWhisper: Investigate Bug"
       },
       {
         "command": "originx.whyWereTheseChanged",
@@ -129,15 +141,31 @@
     "menus": {
       "editor/context": [
         {
+          "command": "originx.analyzeCode",
+          "when": "editorTextFocus",
+          "group": "originx_group@0"
+        },
+        {
           "command": "originx.whyWasThisChanged",
           "when": "editorTextFocus",
           "group": "originx_group@1"
+        },
+        {
+          "command": "originx.investigateBug",
+          "when": "editorTextFocus",
+          "group": "originx_group@2"
         }
       ],
       "explorer/context": [
         {
           "command": "originx.whyWereTheseChanged",
           "group": "originx_group@1"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "originx.reviewWorkingTree",
+          "group": "navigation"
         }
       ],
       "commandPalette": [
@@ -188,6 +216,12 @@
         "command": "originx.whyWasThisChanged",
         "key": "ctrl+alt+h",
         "mac": "cmd+alt+h",
+        "when": "editorTextFocus && editorHasSelection"
+      },
+      {
+        "command": "originx.analyzeCode",
+        "key": "ctrl+o ctrl+x",
+        "mac": "cmd+o cmd+x",
         "when": "editorTextFocus && editorHasSelection"
       }
     ]

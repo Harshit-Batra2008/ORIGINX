@@ -5,6 +5,9 @@ import { CommitInfo, GitHistoryResult, SelectionContext } from '../git/gitTypes'
 import { GeminiExplanation } from '../gemini/geminiTypes';
 import { Neo4jCommitEvidence } from '../neo4j/neo4jGraphTypes';
 import { MultiFileHistoryResult, PerFileExplanation } from '../multiFile/multiFileTypes';
+import { ReviewerResult } from '../reviewer/reviewerTypes';
+import { InvestigationResult } from '../investigation/investigationTypes';
+import { UnifiedAnalysisResult } from '../unified/unifiedTypes';
 
 function getVsCode(): any {
   try {
@@ -321,6 +324,150 @@ export class WebviewView {
       }
     } catch (err) {
       console.error('[ORIGINX] Failed to display multi-file results webview:', err);
+    }
+  }
+
+  public static showReviewerResult(result: ReviewerResult, extensionUri?: vscode.Uri): void {
+    const vsc = getVsCode();
+    if (!vsc) {
+      return;
+    }
+
+    try {
+      const column = vsc.window.activeTextEditor
+        ? vsc.ViewColumn.Beside
+        : vsc.ViewColumn.One;
+
+      if (WebviewView.currentPanel) {
+        try {
+          WebviewView.currentPanel.reveal(column);
+        } catch {
+          WebviewView.currentPanel = undefined;
+        }
+      }
+
+      if (!WebviewView.currentPanel) {
+        const panel = vsc.window.createWebviewPanel(
+          'originxReviewWorkingTree',
+          `GitWhisper: Review Working Tree (${result.totalChangedFiles} files)`,
+          column,
+          {
+            enableScripts: true,
+            retainContextWhenHidden: true
+          }
+        ) as vscode.WebviewPanel;
+
+        panel.onDidDispose(() => {
+          WebviewView.currentPanel = undefined;
+        });
+
+        WebviewView.currentPanel = panel;
+      }
+
+      if (WebviewView.currentPanel) {
+        WebviewView.currentPanel.title = `GitWhisper: Review Working Tree (${result.totalChangedFiles} files)`;
+        WebviewView.currentPanel.webview.html = WebviewView.renderReviewerHtml(result);
+      }
+    } catch (err) {
+      console.error('[ORIGINX] Failed to display reviewer results webview:', err);
+    }
+  }
+
+  public static showInvestigationResult(result: InvestigationResult, extensionUri?: vscode.Uri): void {
+    const vsc = getVsCode();
+    if (!vsc) {
+      return;
+    }
+
+    try {
+      const column = vsc.window.activeTextEditor
+        ? vsc.ViewColumn.Beside
+        : vsc.ViewColumn.One;
+
+      if (WebviewView.currentPanel) {
+        try {
+          WebviewView.currentPanel.reveal(column);
+        } catch {
+          WebviewView.currentPanel = undefined;
+        }
+      }
+
+      const fileName = result.request?.fileName || 'Bug Investigation';
+      const panelTitle = `GitWhisper: Investigate ${fileName}`;
+
+      if (!WebviewView.currentPanel) {
+        const panel = vsc.window.createWebviewPanel(
+          'originxInvestigateBug',
+          panelTitle,
+          column,
+          {
+            enableScripts: true,
+            retainContextWhenHidden: true
+          }
+        ) as vscode.WebviewPanel;
+
+        panel.onDidDispose(() => {
+          WebviewView.currentPanel = undefined;
+        });
+
+        WebviewView.currentPanel = panel;
+      }
+
+      if (WebviewView.currentPanel) {
+        WebviewView.currentPanel.title = panelTitle;
+        WebviewView.currentPanel.webview.html = WebviewView.renderInvestigationHtml(result);
+      }
+    } catch (err) {
+      console.error('[ORIGINX] Failed to display bug investigation webview:', err);
+    }
+  }
+
+  public static showUnifiedAnalysisResult(result: UnifiedAnalysisResult, extensionUri?: vscode.Uri): void {
+    const vsc = getVsCode();
+    if (!vsc) {
+      return;
+    }
+
+    try {
+      const column = vsc.window.activeTextEditor
+        ? vsc.ViewColumn.Beside
+        : vsc.ViewColumn.One;
+
+      if (WebviewView.currentPanel) {
+        try {
+          WebviewView.currentPanel.reveal(column);
+        } catch {
+          WebviewView.currentPanel = undefined;
+        }
+      }
+
+      const fileName = result.request?.fileName || 'Code Analysis';
+      const panelTitle = `GitWhisper: ${fileName}`;
+
+      if (!WebviewView.currentPanel) {
+        const panel = vsc.window.createWebviewPanel(
+          'originxAnalyzeCode',
+          panelTitle,
+          column,
+          {
+            enableScripts: true,
+            retainContextWhenHidden: true
+          }
+        ) as vscode.WebviewPanel;
+
+        panel.onDidDispose(() => {
+          WebviewView.currentPanel = undefined;
+        });
+
+        WebviewView.currentPanel = panel;
+      }
+
+      if (WebviewView.currentPanel) {
+        WebviewView.currentPanel.title = panelTitle;
+        WebviewView.currentPanel.webview.html = WebviewView.renderUnifiedAnalysisHtml(result);
+      }
+    } catch (err) {
+      console.error('[ORIGINX] Failed to display unified code analysis webview:', err);
     }
   }
 
@@ -2777,6 +2924,1690 @@ export class WebviewView {
           </table>
         </div>
       </details>`;
+  }
+
+  public static renderReviewerHtml(result: ReviewerResult): string {
+    const logoHtml = this.getOriginxLogoHtml(26);
+
+    let providerLabel = 'Local Git Only';
+    let providerBadgeClass = 'badge-neutral';
+
+    if (result.explanation) {
+      providerLabel = `VS Code LM (${this.escapeHtml(result.explanation.model || 'copilot')})`;
+      providerBadgeClass = 'badge-provider-vscode';
+    } else if (result.explanationStatus === 'disabled') {
+      providerLabel = 'AI Review Disabled (Default)';
+      providerBadgeClass = 'badge-neutral';
+    } else if (result.explanationStatus === 'no_model') {
+      providerLabel = 'VS Code LM Unavailable';
+      providerBadgeClass = 'badge-warning';
+    } else if (result.explanationStatus === 'blocked_security') {
+      providerLabel = 'Security Blocked';
+      providerBadgeClass = 'badge-error';
+    }
+
+    const durationBadge = result.durationMs ? `${(result.durationMs / 1000).toFixed(1)}s` : '';
+
+    if (result.status === 'no_changes') {
+      return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: https:;">
+  <title>GitWhisper: Review Working Tree</title>
+  <style>
+    :root {
+      --bg: var(--vscode-editor-background);
+      --fg: var(--vscode-editor-foreground);
+      --card-bg: var(--vscode-sideBar-background, rgba(127,127,127,0.06));
+      --card-border: var(--vscode-widget-border, rgba(127,127,127,0.2));
+      --subtle: var(--vscode-descriptionForeground, rgba(127,127,127,0.8));
+    }
+    body { background: var(--bg); color: var(--fg); font-family: var(--vscode-font-family); padding: 20px; line-height: 1.5; }
+    .header { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+    .empty-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 24px; text-align: center; }
+    .empty-title { font-size: 16px; font-weight: 700; margin-bottom: 8px; color: var(--fg); }
+    .empty-desc { color: var(--subtle); font-size: 13px; max-width: 480px; margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    ${logoHtml}
+    <h2 style="margin:0; font-size:16px;">GitWhisper Code Reviewer</h2>
+  </div>
+  <div class="empty-card">
+    <div class="empty-title">Working Tree Clean</div>
+    <div class="empty-desc">No staged, unstaged, or untracked changes were detected in the active Git repository. Make some code edits and run this command again to review your changes.</div>
+  </div>
+</body>
+</html>`;
+    }
+
+    if (result.status === 'not_a_repo') {
+      return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitWhisper: Review Working Tree</title>
+  <style>
+    body { background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); font-family: var(--vscode-font-family); padding: 20px; }
+    .empty-card { background: var(--vscode-sideBar-background); border: 1px solid var(--vscode-widget-border); border-radius: 8px; padding: 24px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="empty-card">
+    <h3>Not a Git Repository</h3>
+    <p>Please open a folder or workspace that contains a Git repository.</p>
+  </div>
+</body>
+</html>`;
+    }
+
+    // Identify un-modified companions vs modified companions
+    const unModifiedCompanions = result.relatedFilesWorthInspecting.filter((r) => !r.isCurrentlyChanged);
+    const modifiedCompanions = result.relatedFilesWorthInspecting.filter((r) => r.isCurrentlyChanged);
+
+    // Render Checklist
+    let checklistHtml = '';
+    if (result.explanation && result.explanation.reviewChecklist && result.explanation.reviewChecklist.length > 0) {
+      checklistHtml = `
+        <div class="review-subcard">
+          <div class="subcard-title">Actionable Review Checklist</div>
+          <ul class="checklist-items">
+            ${result.explanation.reviewChecklist
+              .map((item) => `<li><label class="check-item"><input type="checkbox"> <span>${this.escapeHtml(item)}</span></label></li>`)
+              .join('')}
+          </ul>
+        </div>`;
+    }
+
+    // Render Co-Change Panel
+    let coChangeContentHtml = '';
+    if (result.relatedFilesWorthInspecting.length === 0) {
+      coChangeContentHtml = `
+        <div class="notice-box">
+          <strong>No historical co-changes identified in Neo4j.</strong>
+          <p>Files in this change were historically modified independently, or have not yet been ingested into the repository knowledge graph.</p>
+        </div>`;
+    } else {
+      let unModifiedCards = '';
+      if (unModifiedCompanions.length > 0) {
+        unModifiedCards = `
+          <div class="cochange-group-title">
+            <span class="cochange-alert-pill">Blast Radius Alert</span>
+            Related Files Worth Inspecting (${unModifiedCompanions.length} not modified in this change)
+          </div>
+          <p class="section-subtext">These companion files frequently co-changed with your modified files in previous commits. Verify that tightly-coupled logic or tests were not overlooked.</p>
+          <div class="cochange-list">
+            ${unModifiedCompanions.map((r) => `
+              <div class="cochange-card alert-border">
+                <div class="cochange-card-header">
+                  <span class="cochange-path">${this.escapeHtml(r.filePath)}</span>
+                  <span class="badge badge-warning">Not Modified</span>
+                </div>
+                <div class="cochange-meta">
+                  <span>Historically coupled with: <strong>${this.escapeHtml(r.historicallyCoupledWith.join(', '))}</strong></span>
+                  <span class="badge badge-meta">Shared Commits: ${r.sharedCommitCount}</span>
+                </div>
+                ${r.sampleCommitHashes.length > 0 ? `
+                  <div class="cochange-hashes">
+                    <span class="meta-label">Supporting Commits:</span>
+                    ${r.sampleCommitHashes.slice(0, 4).map((h) => `<span class="hash-pill">${this.escapeHtml(h)}</span>`).join(' ')}
+                  </div>` : ''}
+              </div>`).join('')}
+          </div>`;
+      }
+
+      let modifiedCards = '';
+      if (modifiedCompanions.length > 0) {
+        modifiedCards = `
+          <div class="cochange-group-title" style="margin-top: 20px;">
+            Companion Files Already Included in This Change (${modifiedCompanions.length})
+          </div>
+          <div class="cochange-list">
+            ${modifiedCompanions.map((r) => `
+              <div class="cochange-card">
+                <div class="cochange-card-header">
+                  <span class="cochange-path">${this.escapeHtml(r.filePath)}</span>
+                  <span class="badge badge-success">Included</span>
+                </div>
+                <div class="cochange-meta">
+                  <span>Shared with: <strong>${this.escapeHtml(r.historicallyCoupledWith.join(', '))}</strong></span>
+                  <span class="badge badge-meta">Shared Commits: ${r.sharedCommitCount}</span>
+                </div>
+                ${r.sampleCommitHashes.length > 0 ? `
+                  <div class="cochange-hashes">
+                    <span class="meta-label">Supporting Commits:</span>
+                    ${r.sampleCommitHashes.slice(0, 4).map((h) => `<span class="hash-pill">${this.escapeHtml(h)}</span>`).join(' ')}
+                  </div>` : ''}
+              </div>`).join('')}
+          </div>`;
+      }
+
+      coChangeContentHtml = unModifiedCards + modifiedCards;
+    }
+
+    // Render Changed Files Cards
+    const changedFilesHtml = result.changedFiles.map((f, idx) => {
+      let statusBadge = '';
+      if (f.status === 'staged') statusBadge = '<span class="badge badge-success">Staged</span>';
+      else if (f.status === 'unstaged') statusBadge = '<span class="badge badge-warning">Unstaged</span>';
+      else if (f.status === 'both') statusBadge = '<span class="badge badge-provider-vscode">Staged + Unstaged</span>';
+      else if (f.status === 'untracked') statusBadge = '<span class="badge badge-neutral">Untracked</span>';
+
+      return `
+        <div class="file-card">
+          <div class="file-card-header">
+            <span class="file-index">#${idx + 1}</span>
+            <span class="file-path">${this.escapeHtml(f.filePath)}</span>
+            ${statusBadge}
+            <span class="badge badge-meta">${(f.diffCharCount / 1024).toFixed(1)} KB</span>
+          </div>
+          ${f.oldPath ? `<div class="file-rename">Renamed from: ${this.escapeHtml(f.oldPath)}</div>` : ''}
+        </div>`;
+    }).join('');
+
+    // Render Diffs
+    const diffsHtml = result.changedFiles.map((f, idx) => {
+      return `
+        <details class="diff-accordion" ${idx === 0 ? 'open' : ''}>
+          <summary class="diff-summary">
+            <span><strong>${this.escapeHtml(f.filePath)}</strong> (${f.status.toUpperCase()})</span>
+            <span class="badge badge-meta">${(f.diffCharCount / 1024).toFixed(1)} KB</span>
+          </summary>
+          <div class="diff-content">
+            <pre class="diff-pre"><code>${this.escapeHtml(f.diff || '(No diff content)')}</code></pre>
+          </div>
+        </details>`;
+    }).join('');
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: https:;">
+  <title>GitWhisper: Review Working Tree Changes</title>
+  <style>
+    :root {
+      --bg: var(--vscode-editor-background);
+      --fg: var(--vscode-editor-foreground);
+      --card-bg: var(--vscode-sideBar-background, rgba(127,127,127,0.06));
+      --card-border: var(--vscode-widget-border, rgba(127,127,127,0.2));
+      --subtle: var(--vscode-descriptionForeground, rgba(127,127,127,0.8));
+      --accent: var(--vscode-textLink-foreground, #7c3aed);
+      --badge-bg: var(--vscode-badge-background, rgba(127,127,127,0.2));
+      --badge-fg: var(--vscode-badge-foreground, #ffffff);
+      --font-mono: var(--vscode-editor-font-family, Consolas, 'Courier New', monospace);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif);
+      font-size: 13px;
+      line-height: 1.5;
+      padding: 16px 20px 40px 20px;
+      overflow-x: hidden;
+      word-break: break-word;
+    }
+    .header-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+    .brand-title { display: inline-flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; color: var(--fg); }
+    .header-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .badge { display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; line-height: 1.3; }
+    .badge-neutral { background: var(--badge-bg); color: var(--badge-fg); }
+    .badge-provider-vscode { background: rgba(124, 58, 237, 0.16); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.35); }
+    .badge-success { background: rgba(46, 160, 67, 0.18); color: #3fb950; border: 1px solid rgba(63, 185, 80, 0.35); }
+    .badge-warning { background: rgba(210, 153, 34, 0.18); color: #d29922; border: 1px solid rgba(210, 153, 34, 0.35); }
+    .badge-error { background: rgba(248, 81, 73, 0.18); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.35); }
+    .badge-meta { background: var(--card-bg); border: 1px solid var(--card-border); color: var(--subtle); font-family: var(--font-mono); font-size: 10px; }
+
+    .metric-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .metric-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .metric-label { font-size: 11px; text-transform: uppercase; color: var(--subtle); font-weight: 600; letter-spacing: 0.5px; }
+    .metric-value { font-size: 15px; font-weight: 700; color: var(--fg); }
+
+    .nav-tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid var(--card-border);
+      margin-bottom: 16px;
+      overflow-x: auto;
+    }
+    .tab-button {
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 5px 5px 0 0;
+      color: var(--subtle);
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+      transition: all 0.15s ease;
+    }
+    .tab-button:hover { color: var(--fg); background: rgba(127,127,127,0.08); }
+    .tab-button.active {
+      color: var(--fg);
+      background: var(--card-bg);
+      border-color: var(--card-border) var(--card-border) transparent var(--card-border);
+      border-bottom: 2px solid #7c3aed;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .review-subcard {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+    }
+    .subcard-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--accent); margin-bottom: 8px; }
+    .checklist-items { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+    .check-item { display: inline-flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+
+    .cochange-group-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; color: var(--fg); display: flex; align-items: center; gap: 8px; }
+    .cochange-alert-pill { font-size: 10px; font-weight: 700; text-transform: uppercase; background: rgba(210, 153, 34, 0.2); color: #d29922; border: 1px solid rgba(210, 153, 34, 0.4); padding: 1px 6px; border-radius: 10px; }
+    .section-subtext { font-size: 12px; color: var(--subtle); margin-bottom: 10px; }
+    .cochange-list { display: flex; flex-direction: column; gap: 8px; }
+    .cochange-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; padding: 10px 14px; }
+    .cochange-card.alert-border { border-left: 3px solid #d29922; }
+    .cochange-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+    .cochange-path { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--fg); }
+    .cochange-meta { font-size: 11px; color: var(--subtle); display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+    .cochange-hashes { font-size: 11px; color: var(--subtle); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+    .hash-pill { font-family: var(--font-mono); font-size: 10px; background: rgba(127,127,127,0.15); padding: 1px 5px; border-radius: 3px; }
+
+    .file-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; padding: 10px 14px; margin-bottom: 8px; }
+    .file-card-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .file-index { font-size: 11px; color: var(--subtle); font-weight: 700; }
+    .file-path { font-family: var(--font-mono); font-size: 12px; font-weight: 600; flex: 1; }
+    .file-rename { font-size: 11px; color: var(--subtle); margin-top: 4px; }
+
+    .diff-accordion { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; margin-bottom: 10px; overflow: hidden; }
+    .diff-summary { padding: 10px 14px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; font-family: var(--font-mono); font-size: 12px; user-select: none; }
+    .diff-content { padding: 10px 14px; border-top: 1px solid var(--card-border); }
+    .diff-pre { font-family: var(--font-mono); font-size: 11px; line-height: 1.4; overflow-x: auto; white-space: pre; background: rgba(0,0,0,0.15); padding: 10px; border-radius: 4px; }
+
+    .notice-box { background: var(--card-bg); border: 1px dashed var(--card-border); border-radius: 6px; padding: 16px; color: var(--subtle); }
+  </style>
+</head>
+<body>
+  <div class="header-row">
+    <div class="brand-title">
+      ${logoHtml}
+      <span>GitWhisper Code Reviewer</span>
+    </div>
+    <div class="header-badges">
+      <span class="badge ${providerBadgeClass}">${providerLabel}</span>
+      <span class="badge badge-meta">${this.escapeHtml(result.repoName || 'Repository')}</span>
+      ${durationBadge ? `<span class="badge badge-meta">${durationBadge}</span>` : ''}
+    </div>
+  </div>
+
+  <div class="metric-strip">
+    <div class="metric-card">
+      <span class="metric-label">Changed Files</span>
+      <span class="metric-value">${result.totalChangedFiles} <span style="font-size:11px; font-weight:normal; color:var(--subtle);">(${result.stagedCount} staged, ${result.unstagedCount} unstaged, ${result.untrackedCount} untracked)</span></span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Diff Volume</span>
+      <span class="metric-value">${(result.totalDiffChars / 1024).toFixed(1)} KB</span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Blast Radius Warning</span>
+      <span class="metric-value" style="color: ${unModifiedCompanions.length > 0 ? '#d29922' : 'var(--fg)'};">${unModifiedCompanions.length} un-modified companion(s)</span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Neo4j Provenance</span>
+      <span class="metric-value">${result.neo4jStatus === 'ok' ? 'Connected' : result.neo4jStatus.toUpperCase()}</span>
+    </div>
+  </div>
+
+  <nav class="nav-tabs" role="tablist">
+    <button class="tab-button active" data-tab="rev-panel-review" role="tab">Review Summary</button>
+    <button class="tab-button" data-tab="rev-panel-files" role="tab">Changed Files (${result.totalChangedFiles})</button>
+    <button class="tab-button" data-tab="rev-panel-cochange" role="tab">Co-Change & Blast Radius (${result.relatedFilesWorthInspecting.length})</button>
+    <button class="tab-button" data-tab="rev-panel-diffs" role="tab">Diffs (${result.totalChangedFiles})</button>
+  </nav>
+
+  <div id="rev-panel-review" class="tab-panel active" role="tabpanel">
+    ${result.explanation ? `
+      <div class="review-subcard">
+        <div class="subcard-title">Executive Summary</div>
+        <p>${this.escapeHtml(result.explanation.summary)}</p>
+      </div>
+      <div class="review-subcard">
+        <div class="subcard-title">Architectural Impact & Blast Radius</div>
+        <p>${this.escapeHtml(result.explanation.impactAnalysis)}</p>
+      </div>
+      ${result.explanation.relatedFilesGuidance ? `
+        <div class="review-subcard">
+          <div class="subcard-title">Related Files Guidance</div>
+          <p>${this.escapeHtml(result.explanation.relatedFilesGuidance)}</p>
+        </div>` : ''}
+      ${checklistHtml}
+      <div class="review-subcard">
+        <div class="subcard-title">Uncertainty & Evidence Limitations</div>
+        <p>${this.escapeHtml(result.explanation.uncertaintyNotes)}</p>
+      </div>
+    ` : `
+      <div class="review-subcard">
+        <div class="subcard-title">Local Git Review Mode</div>
+        <p>Automatic AI analysis is disabled by default. GitWhisper has collected local working tree diffs and historical Neo4j co-change context without network transmission.</p>
+        <p style="margin-top: 8px; color: var(--subtle);">To generate AI-powered review summaries with GitHub Copilot, enable Automatic AI Analysis in the ORIGINX Command Center.</p>
+      </div>
+      ${unModifiedCompanions.length > 0 ? `
+        <div class="review-subcard" style="border-left: 3px solid #d29922;">
+          <div class="subcard-title" style="color: #d29922;">Blast Radius Inspection Recommended</div>
+          <p>Neo4j detected <strong>${unModifiedCompanions.length}</strong> companion file(s) that frequently co-changed with your modified files in past commits, but are NOT modified in this change. Inspect the <em>Co-Change & Blast Radius</em> tab to verify these dependencies.</p>
+        </div>` : ''}
+    `}
+  </div>
+
+  <div id="rev-panel-files" class="tab-panel" role="tabpanel">
+    ${changedFilesHtml}
+  </div>
+
+  <div id="rev-panel-cochange" class="tab-panel" role="tabpanel">
+    ${coChangeContentHtml}
+  </div>
+
+  <div id="rev-panel-diffs" class="tab-panel" role="tabpanel">
+    ${diffsHtml}
+  </div>
+
+  <script>
+    (function() {
+      const tabs = document.querySelectorAll('.tab-button');
+      const panels = document.querySelectorAll('.tab-panel');
+
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          const targetId = tab.getAttribute('data-tab');
+          tabs.forEach(t => t.classList.remove('active'));
+          panels.forEach(p => p.classList.remove('active'));
+
+          tab.classList.add('active');
+          const activePanel = document.getElementById(targetId);
+          if (activePanel) {
+            activePanel.classList.add('active');
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>`;
+  }
+
+  public static renderInvestigationHtml(result: InvestigationResult): string {
+    const logoHtml = this.getOriginxLogoHtml(26);
+    const req = result.request;
+    const exp = result.explanation;
+    const diagList = result.evidence?.diagnostics || [];
+    const commits = result.evidence?.gitHistory?.commits || [];
+    const coChanges = result.evidence?.coChangeEvidence || [];
+
+    let providerLabel = 'Local Git Only';
+    let providerBadgeClass = 'badge-neutral';
+
+    if (exp) {
+      providerLabel = `VS Code LM (${this.escapeHtml(exp.model || 'copilot')})`;
+      providerBadgeClass = 'badge-provider-vscode';
+    } else if (result.explanationStatus === 'disabled') {
+      providerLabel = 'AI Investigation Disabled (Default)';
+      providerBadgeClass = 'badge-neutral';
+    } else if (result.explanationStatus === 'no_model') {
+      providerLabel = 'VS Code LM Unavailable';
+      providerBadgeClass = 'badge-warning';
+    } else if (result.explanationStatus === 'blocked_security') {
+      providerLabel = 'Security Blocked';
+      providerBadgeClass = 'badge-error';
+    } else if (result.explanationStatus === 'failed') {
+      providerLabel = 'AI Failed (Local Mode)';
+      providerBadgeClass = 'badge-warning';
+    }
+
+    const durationBadge = result.durationMs ? `${(result.durationMs / 1000).toFixed(1)}s` : '';
+
+    if (result.status === 'not_a_repo') {
+      return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitWhisper: Investigate Bug</title>
+  <style>
+    body { background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); font-family: var(--vscode-font-family); padding: 20px; }
+    .empty-card { background: var(--vscode-sideBar-background); border: 1px solid var(--vscode-widget-border); border-radius: 8px; padding: 24px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="empty-card">
+    <h3>File Outside Git Repository</h3>
+    <p>The selected file is not inside a Git repository. GitWhisper requires Git history to investigate causality and historical co-changes.</p>
+  </div>
+</body>
+</html>`;
+    }
+
+    if (result.status === 'untracked_file') {
+      return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitWhisper: Investigate Bug</title>
+  <style>
+    body { background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); font-family: var(--vscode-font-family); padding: 20px; }
+    .empty-card { background: var(--vscode-sideBar-background); border: 1px solid var(--vscode-widget-border); border-radius: 8px; padding: 24px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="empty-card">
+    <h3>Untracked File</h3>
+    <p>The selected file is untracked and has no Git commits. Commit the file to Git to enable historical investigation.</p>
+  </div>
+</body>
+</html>`;
+    }
+
+    const errCount = diagList.filter((d) => d.severity === 'error').length;
+    const warnCount = diagList.filter((d) => d.severity === 'warning').length;
+    const targetFileName = req?.fileName || 'Selected Code';
+    const targetFilePath = req?.filePath || '';
+    const startLine = req?.startLine || 1;
+    const endLine = req?.endLine || 1;
+    const totalLines = Math.max(1, endLine - startLine + 1);
+
+    // Diagnostics cards
+    let diagnosticsHtml = '<p class="subtle-text">No active VS Code compiler or linter diagnostics detected for this file.</p>';
+    if (diagList.length > 0) {
+      diagnosticsHtml = `<div class="diag-list">${diagList.map((d, i) => {
+        let badgeClass = 'badge-neutral';
+        if (d.severity === 'error') badgeClass = 'badge-error';
+        else if (d.severity === 'warning') badgeClass = 'badge-warning';
+        else if (d.severity === 'information') badgeClass = 'badge-provider-vscode';
+
+        const overlapBadge = d.overlapsSelection
+          ? '<span class="badge badge-success">Overlaps Selection</span>'
+          : '<span class="badge badge-meta">File Level</span>';
+        const sourceInfo = d.source ? `${this.escapeHtml(d.source)}${d.code ? `:${this.escapeHtml(String(d.code))}` : ''}` : '';
+
+        return `
+          <div class="diag-card">
+            <div class="diag-card-header">
+              <span class="badge ${badgeClass}">${d.severity.toUpperCase()}</span>
+              ${sourceInfo ? `<span class="badge badge-meta">${sourceInfo}</span>` : ''}
+              ${overlapBadge}
+              <span class="meta-label" style="margin-left: auto;">Lines ${d.range.startLine}:${d.range.startCharacter}–${d.range.endLine}:${d.range.endCharacter}</span>
+            </div>
+            <div class="diag-message">${this.escapeHtml(d.message)}</div>
+          </div>`;
+      }).join('')}</div>`;
+    }
+
+    // Co-change companion cards
+    let coChangeHtml = '<p class="subtle-text">No Neo4j co-change companion files found for this file (Neo4j may be offline or no shared commits recorded).</p>';
+    if (coChanges.length > 0) {
+      coChangeHtml = `<div class="cochange-list">${coChanges.map((co) => {
+        const changedTag = co.isCurrentlyChanged
+          ? '<span class="badge badge-warning">Currently Modified</span>'
+          : '<span class="badge badge-provider-vscode">Coupled Companion</span>';
+        const hashes = co.sampleCommitHashes.length > 0
+          ? `<div class="cochange-hashes"><span class="meta-label">Supporting Commits:</span> ${co.sampleCommitHashes.slice(0, 4).map((h) => `<span class="hash-pill">${this.escapeHtml(h)}</span>`).join(' ')}</div>`
+          : '';
+
+        return `
+          <div class="cochange-card">
+            <div class="cochange-card-header">
+              <span class="cochange-path">${this.escapeHtml(co.filePath)}</span>
+              ${changedTag}
+              <span class="badge badge-meta" style="margin-left: auto;">${co.sharedCommitCount} shared commit(s)</span>
+            </div>
+            <div class="cochange-meta">Historically coupled with: <strong>${this.escapeHtml(co.historicallyCoupledWith.join(', '))}</strong></div>
+            ${hashes}
+          </div>`;
+      }).join('')}</div>`;
+    }
+
+    // Git commits list
+    let commitsHtml = '<p class="subtle-text">No Git commits found for the selected lines.</p>';
+    if (commits.length > 0) {
+      commitsHtml = `<div class="commit-list">${commits.map((c: any) => {
+        return `
+          <div class="commit-card">
+            <div class="commit-card-header">
+              <span class="hash-pill">${this.escapeHtml(c.shortHash)}</span>
+              <span class="commit-subject">${this.escapeHtml(c.subject)}</span>
+            </div>
+            <div class="commit-meta">
+              <span>Author: <strong>${this.escapeHtml(c.authorName)}</strong> &lt;${this.escapeHtml(c.authorEmail)}&gt;</span>
+              <span>Date: ${this.escapeHtml(c.date)}</span>
+            </div>
+            ${c.body ? `<div class="commit-body">${this.escapeHtml(c.body)}</div>` : ''}
+          </div>`;
+      }).join('')}</div>`;
+    }
+
+    // Diffs html
+    let diffsHtml = '<p class="subtle-text">No diff hunks available for the selected lines.</p>';
+    if (commits.some((c: any) => c.diff)) {
+      diffsHtml = commits
+        .filter((c: any) => c.diff)
+        .map((c: any, idx: number) => {
+          return `
+            <details class="diff-accordion" ${idx === 0 ? 'open' : ''}>
+              <summary class="diff-summary">
+                <span><strong>${this.escapeHtml(c.shortHash)}</strong>: ${this.escapeHtml(c.subject)}</span>
+                <span class="badge badge-meta">${this.escapeHtml(c.date)}</span>
+              </summary>
+              <div class="diff-content">
+                <pre class="diff-pre"><code>${this.escapeHtml(c.diff || '(No diff content)')}</code></pre>
+              </div>
+            </details>`;
+        })
+        .join('');
+    }
+
+    // Minimal Suggested Fix section
+    const fix = exp?.minimalSuggestedFix || {
+      code: '// [UNVERIFIED - SUGGESTED FIX]\n// No automated patch generated. Review the observed facts and investigation steps.',
+      explanation: 'No patch was generated by the language model.',
+      isVerified: false
+    };
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: https:;">
+  <title>GitWhisper: Investigate Bug</title>
+  <style>
+    :root {
+      --bg: var(--vscode-editor-background);
+      --fg: var(--vscode-editor-foreground);
+      --card-bg: var(--vscode-sideBar-background, rgba(127,127,127,0.06));
+      --card-border: var(--vscode-widget-border, rgba(127,127,127,0.2));
+      --subtle: var(--vscode-descriptionForeground, rgba(127,127,127,0.8));
+      --accent: var(--vscode-textLink-foreground, #7c3aed);
+      --badge-bg: var(--vscode-badge-background, rgba(127,127,127,0.2));
+      --badge-fg: var(--vscode-badge-foreground, #ffffff);
+      --font-mono: var(--vscode-editor-font-family, Consolas, 'Courier New', monospace);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif);
+      font-size: 13px;
+      line-height: 1.5;
+      padding: 16px 20px 40px 20px;
+      overflow-x: hidden;
+      word-break: break-word;
+    }
+    .header-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+    .brand-title { display: inline-flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; color: var(--fg); }
+    .header-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .badge { display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; line-height: 1.3; }
+    .badge-neutral { background: var(--badge-bg); color: var(--badge-fg); }
+    .badge-provider-vscode { background: rgba(124, 58, 237, 0.16); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.35); }
+    .badge-success { background: rgba(46, 160, 67, 0.18); color: #3fb950; border: 1px solid rgba(63, 185, 80, 0.35); }
+    .badge-warning { background: rgba(210, 153, 34, 0.18); color: #d29922; border: 1px solid rgba(210, 153, 34, 0.35); }
+    .badge-error { background: rgba(248, 81, 73, 0.18); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.35); }
+    .badge-meta { background: var(--card-bg); border: 1px solid var(--card-border); color: var(--subtle); font-family: var(--font-mono); font-size: 10px; }
+
+    .target-bar {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .target-path { font-family: var(--font-mono); font-weight: 600; color: var(--accent); }
+
+    .symptom-card {
+      background: rgba(210, 153, 34, 0.08);
+      border: 1px solid rgba(210, 153, 34, 0.3);
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+    }
+    .symptom-header { margin-bottom: 6px; }
+    .symptom-body { font-family: var(--font-mono); font-size: 12px; color: var(--fg); white-space: pre-wrap; }
+
+    .metric-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .metric-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .metric-label { font-size: 11px; text-transform: uppercase; color: var(--subtle); font-weight: 600; letter-spacing: 0.5px; }
+    .metric-value { font-size: 15px; font-weight: 700; color: var(--fg); }
+
+    .nav-tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid var(--card-border);
+      margin-bottom: 16px;
+      overflow-x: auto;
+    }
+    .tab-button {
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 5px 5px 0 0;
+      color: var(--subtle);
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .tab-button:hover { color: var(--fg); background: var(--card-bg); }
+    .tab-button.active {
+      color: var(--fg);
+      background: var(--card-bg);
+      border-color: var(--card-border) var(--card-border) var(--bg);
+      border-bottom: 2px solid var(--accent);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .section-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+    }
+    .section-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--fg);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .bullet-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .bullet-item { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }
+    .bullet-icon { color: var(--accent); font-weight: 700; }
+
+    .unverified-banner {
+      background: rgba(248, 81, 73, 0.1);
+      border: 1px solid rgba(248, 81, 73, 0.35);
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .code-container {
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .code-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px;
+      background: var(--card-bg);
+      border-bottom: 1px solid var(--card-border);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--subtle);
+    }
+    .copy-btn {
+      background: var(--accent);
+      color: #ffffff;
+      border: none;
+      border-radius: 4px;
+      padding: 3px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .copy-btn:hover { opacity: 0.9; }
+    .code-pre {
+      padding: 12px;
+      margin: 0;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .fix-explanation { font-size: 13px; color: var(--fg); line-height: 1.5; }
+
+    .diag-list, .cochange-list, .commit-list { display: flex; flex-direction: column; gap: 8px; }
+    .diag-card, .cochange-card, .commit-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+    }
+    .diag-card-header, .cochange-card-header, .commit-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+    .diag-message { font-size: 12px; color: var(--fg); }
+    .cochange-path { font-family: var(--font-mono); font-weight: 600; font-size: 12px; color: var(--fg); }
+    .cochange-meta, .commit-meta { font-size: 11px; color: var(--subtle); display: flex; gap: 12px; flex-wrap: wrap; }
+    .cochange-hashes { margin-top: 6px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .hash-pill {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      padding: 1px 6px;
+      border-radius: 3px;
+      color: var(--accent);
+    }
+    .commit-subject { font-weight: 600; font-size: 12px; color: var(--fg); }
+    .commit-body { font-size: 11px; color: var(--subtle); margin-top: 4px; white-space: pre-wrap; }
+
+    .diff-accordion {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    .diff-summary {
+      padding: 8px 12px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--card-bg);
+      user-select: none;
+    }
+    .diff-content { padding: 10px; border-top: 1px solid var(--card-border); background: rgba(0,0,0,0.2); }
+    .diff-pre { margin: 0; font-family: var(--font-mono); font-size: 11px; overflow-x: auto; white-space: pre; }
+    .subtle-text { color: var(--subtle); font-size: 12px; font-style: italic; }
+  </style>
+</head>
+<body>
+  <div class="header-row">
+    <div class="brand-title">
+      ${logoHtml}
+      <span>GitWhisper: Investigate Bug</span>
+    </div>
+    <div class="header-badges">
+      <span class="badge ${providerBadgeClass}">${providerLabel}</span>
+      ${diagList.length > 0 ? `<span class="badge ${errCount > 0 ? 'badge-error' : 'badge-warning'}">${diagList.length} Diagnostic(s)</span>` : ''}
+      <span class="badge badge-meta">${commits.length} Commit(s)</span>
+      <span class="badge badge-meta">Neo4j: ${result.evidence?.neo4jStatus || 'disabled'}</span>
+      ${durationBadge ? `<span class="badge badge-meta">${durationBadge}</span>` : ''}
+    </div>
+  </div>
+
+  <div class="target-bar">
+    <div>Target: <span class="target-path">${this.escapeHtml(targetFilePath)}</span></div>
+    <div>Lines: <strong>${startLine}–${endLine}</strong> (${totalLines} line(s))</div>
+  </div>
+
+  ${req?.userErrorMessage ? `
+    <div class="symptom-card">
+      <div class="symptom-header">
+        <span class="badge badge-warning">Reported Error / Symptom</span>
+      </div>
+      <div class="symptom-body">${this.escapeHtml(req.userErrorMessage)}</div>
+    </div>` : ''}
+
+  <div class="metric-strip">
+    <div class="metric-card">
+      <span class="metric-label">Compiler Diagnostics</span>
+      <span class="metric-value">${diagList.length} (${errCount} err, ${warnCount} warn)</span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Git Commits On Lines</span>
+      <span class="metric-value">${commits.length} commit(s)</span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Neo4j Co-Changes</span>
+      <span class="metric-value">${coChanges.length} coupled file(s)</span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Analysis Mode</span>
+      <span class="metric-value" style="font-size: 12px;">${exp ? 'Copilot + Graph' : 'Local Evidence'}</span>
+    </div>
+  </div>
+
+  <div class="nav-tabs">
+    <button class="tab-button active" data-tab="tab-analysis">Analysis &amp; Hypotheses</button>
+    <button class="tab-button" data-tab="tab-plan">Investigation Plan</button>
+    <button class="tab-button" data-tab="tab-fix">Suggested Fix</button>
+    <button class="tab-button" data-tab="tab-evidence">Diagnostics &amp; Evidence (${diagList.length + coChanges.length})</button>
+    <button class="tab-button" data-tab="tab-diffs">Git Diffs (${commits.length})</button>
+  </div>
+
+  <!-- TAB 1: Analysis & Hypotheses -->
+  <div id="tab-analysis" class="tab-panel active">
+    <div class="section-card">
+      <div class="section-title">1. Observed Facts</div>
+      <div style="font-size: 13px; line-height: 1.5; color: var(--fg); white-space: pre-wrap;">${this.escapeHtml(exp?.observedFacts || 'Observed facts based on static code, diagnostics, and Git history.')}</div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">2. Plausible Root-Cause Hypotheses</div>
+      <ul class="bullet-list">
+        ${(exp?.rootCauseHypotheses || ['Review compiler diagnostics and recent commit diffs for potential logic errors.']).map((h) => `
+          <li class="bullet-item">
+            <span class="bullet-icon">&#x2022;</span>
+            <span>${this.escapeHtml(h)}</span>
+          </li>`).join('')}
+      </ul>
+    </div>
+
+    ${exp?.relatedFiles && exp.relatedFiles.length > 0 ? `
+      <div class="section-card">
+        <div class="section-title">Related Files Worth Inspecting</div>
+        <ul class="bullet-list">
+          ${exp.relatedFiles.map((rf) => `
+            <li class="bullet-item">
+              <span class="bullet-icon">&#x2192;</span>
+              <span><strong>${this.escapeHtml(rf.filePath)}</strong>: ${this.escapeHtml(rf.reason)}</span>
+            </li>`).join('')}
+        </ul>
+      </div>` : ''}
+
+    <div class="section-card">
+      <div class="section-title">Uncertainties &amp; Limitations</div>
+      <ul class="bullet-list">
+        ${(exp?.uncertainties || ['Static analysis only. Verify with runtime execution and reproduction steps.']).map((u) => `
+          <li class="bullet-item">
+            <span class="bullet-icon">&#x25CB;</span>
+            <span style="color: var(--subtle);">${this.escapeHtml(u)}</span>
+          </li>`).join('')}
+      </ul>
+    </div>
+  </div>
+
+  <!-- TAB 2: Investigation Plan -->
+  <div id="tab-plan" class="tab-panel">
+    <div class="section-card">
+      <div class="section-title">Proposed Investigation Steps</div>
+      <ul class="bullet-list">
+        ${(exp?.investigationSteps || ['Set a breakpoint on the target line.', 'Inspect variable values during reproduction.']).map((step, idx) => `
+          <li class="bullet-item">
+            <span class="bullet-icon">${idx + 1}.</span>
+            <span>${this.escapeHtml(step)}</span>
+          </li>`).join('')}
+      </ul>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">Relevant Tests to Run</div>
+      <ul class="bullet-list">
+        ${(exp?.relevantTests || ['Run existing test suites.', 'Add an edge-case test covering this scenario.']).map((t) => `
+          <li class="bullet-item">
+            <span class="bullet-icon">&#x2713;</span>
+            <span>${this.escapeHtml(t)}</span>
+          </li>`).join('')}
+      </ul>
+    </div>
+  </div>
+
+  <!-- TAB 3: Suggested Fix -->
+  <div id="tab-fix" class="tab-panel">
+    <div class="unverified-banner">
+      <span class="badge badge-error">[UNVERIFIED - SUGGESTED FIX]</span>
+      <span>This minimal patch is an <strong>advisory suggestion</strong> generated from Git &amp; Neo4j context. It has NOT been automatically executed or tested. Always review and verify before applying.</span>
+    </div>
+
+    <div class="code-container">
+      <div class="code-header">
+        <span>Suggested Patch</span>
+        <button class="copy-btn" id="copy-btn">Copy Fix</button>
+      </div>
+      <pre class="code-pre"><code id="fix-code-block">${this.escapeHtml(fix.code)}</code></pre>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">Explanation &amp; Assumptions</div>
+      <div class="fix-explanation">${this.escapeHtml(fix.explanation)}</div>
+    </div>
+  </div>
+
+  <!-- TAB 4: Diagnostics & Evidence -->
+  <div id="tab-evidence" class="tab-panel">
+    <div class="section-card">
+      <div class="section-title">Active VS Code Diagnostics (${diagList.length})</div>
+      ${diagnosticsHtml}
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">Neo4j Co-Changed Companion Files (${coChanges.length})</div>
+      ${coChangeHtml}
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">Git Blame Commits On Selection (${commits.length})</div>
+      ${commitsHtml}
+    </div>
+  </div>
+
+  <!-- TAB 5: Git Diffs -->
+  <div id="tab-diffs" class="tab-panel">
+    <div class="section-card">
+      <div class="section-title">Diff Hunks for Selected Lines (${commits.length})</div>
+      ${diffsHtml}
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const tabs = document.querySelectorAll('.tab-button');
+      const panels = document.querySelectorAll('.tab-panel');
+
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          const targetId = tab.getAttribute('data-tab');
+          tabs.forEach(t => t.classList.remove('active'));
+          panels.forEach(p => p.classList.remove('active'));
+
+          tab.classList.add('active');
+          const activePanel = document.getElementById(targetId);
+          if (activePanel) {
+            activePanel.classList.add('active');
+          }
+        });
+      });
+
+      const copyBtn = document.getElementById('copy-btn');
+      if (copyBtn) {
+        copyBtn.addEventListener('click', () => {
+          const codeEl = document.getElementById('fix-code-block');
+          if (codeEl) {
+            navigator.clipboard.writeText(codeEl.innerText).then(() => {
+              copyBtn.textContent = 'Copied!';
+              setTimeout(() => { copyBtn.textContent = 'Copy Fix'; }, 2000);
+            });
+          }
+        });
+      }
+    })();
+  </script>
+</body>
+</html>`;
+  }
+
+  public static renderUnifiedAnalysisHtml(result: UnifiedAnalysisResult): string {
+    const logoHtml = this.getOriginxLogoHtml(26);
+    const req = result.request;
+    const exp = result.explanation;
+    const diagList = result.evidence?.diagnostics || [];
+    const commits = result.evidence?.gitHistory?.commits || [];
+    const coChanges = result.evidence?.neo4jCoChanges || [];
+    const neo4jCommits = result.evidence?.neo4jFileEvidence || [];
+    const isWorkingTreeMod = result.evidence?.isWorkingTreeModified || false;
+
+    let providerLabel = 'Local Git Only';
+    let providerBadgeClass = 'badge-neutral';
+
+    if (exp) {
+      providerLabel = `VS Code LM (${this.escapeHtml(exp.model || 'copilot')})`;
+      providerBadgeClass = 'badge-provider-vscode';
+    } else if (result.explanationStatus === 'disabled') {
+      providerLabel = 'AI Analysis Disabled (Default)';
+      providerBadgeClass = 'badge-neutral';
+    } else if (result.explanationStatus === 'no_model') {
+      providerLabel = 'VS Code LM Unavailable';
+      providerBadgeClass = 'badge-warning';
+    } else if (result.explanationStatus === 'blocked_security') {
+      providerLabel = 'Security Blocked';
+      providerBadgeClass = 'badge-error';
+    } else if (result.explanationStatus === 'failed') {
+      providerLabel = 'AI Failed (Local Mode)';
+      providerBadgeClass = 'badge-warning';
+    }
+
+    const durationBadge = result.durationMs ? `${(result.durationMs / 1000).toFixed(1)}s` : '';
+
+    if (result.status === 'not_a_repo') {
+      return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitWhisper: Analyze Code</title>
+  <style>
+    body { background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); font-family: var(--vscode-font-family); padding: 20px; }
+    .empty-card { background: var(--vscode-sideBar-background); border: 1px solid var(--vscode-widget-border); border-radius: 8px; padding: 24px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="empty-card">
+    <h3>File Outside Git Repository</h3>
+    <p>The selected file is not inside a Git repository. GitWhisper requires Git history to analyze code causality and historical evolution.</p>
+  </div>
+</body>
+</html>`;
+    }
+
+    if (result.status === 'untracked_file') {
+      return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitWhisper: Analyze Code</title>
+  <style>
+    body { background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); font-family: var(--vscode-font-family); padding: 20px; }
+    .empty-card { background: var(--vscode-sideBar-background); border: 1px solid var(--vscode-widget-border); border-radius: 8px; padding: 24px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="empty-card">
+    <h3>Untracked File</h3>
+    <p>The selected file is untracked and has no Git commits. Commit the file to Git to enable historical analysis.</p>
+  </div>
+</body>
+</html>`;
+    }
+
+    const errCount = diagList.filter((d: any) => d.severity === 'error').length;
+    const warnCount = diagList.filter((d: any) => d.severity === 'warning').length;
+    const targetFileName = req?.fileName || 'Selected Code';
+    const targetFilePath = req?.filePath || '';
+    const startLine = req?.startLine || 1;
+    const endLine = req?.endLine || 1;
+    const totalLines = Math.max(1, endLine - startLine + 1);
+
+    // Diagnostics section html
+    let diagnosticsHtml = `
+      <div class="clean-card">
+        <span class="badge badge-success" style="margin-bottom: 6px;">Clean State</span>
+        <div style="font-weight: 600; font-size: 13px;">No compiler diagnostics or reported bugs detected for this selection.</div>
+        <div class="subtle-text" style="margin-top: 4px;">Language server reports zero errors, warnings, or active diagnostic issues on the selected lines.</div>
+      </div>`;
+
+    if (diagList.length > 0) {
+      diagnosticsHtml = `<div class="diag-list">${diagList.map((d: any) => {
+        let badgeClass = 'badge-neutral';
+        if (d.severity === 'error') badgeClass = 'badge-error';
+        else if (d.severity === 'warning') badgeClass = 'badge-warning';
+        else if (d.severity === 'information') badgeClass = 'badge-provider-vscode';
+
+        const overlapBadge = d.overlapsSelection
+          ? '<span class="badge badge-success">Overlaps Selection</span>'
+          : '<span class="badge badge-meta">File Level</span>';
+        const sourceInfo = d.source ? `${this.escapeHtml(d.source)}${d.code ? `:${this.escapeHtml(String(d.code))}` : ''}` : '';
+
+        return `
+          <div class="diag-card">
+            <div class="diag-card-header">
+              <span class="badge ${badgeClass}">${d.severity.toUpperCase()}</span>
+              ${sourceInfo ? `<span class="badge badge-meta">${sourceInfo}</span>` : ''}
+              ${overlapBadge}
+              <span class="meta-label" style="margin-left: auto;">Lines ${d.range.startLine}:${d.range.startCharacter}–${d.range.endLine}:${d.range.endCharacter}</span>
+            </div>
+            <div class="diag-message">${this.escapeHtml(d.message)}</div>
+          </div>`;
+      }).join('')}</div>`;
+    }
+
+    // Co-change companion cards
+    let coChangeHtml = '<p class="subtle-text">No Neo4j co-change companion files found for this file (Neo4j may be offline or no shared commits recorded).</p>';
+    if (coChanges.length > 0) {
+      coChangeHtml = `<div class="cochange-list">${coChanges.map((co: any) => {
+        const changedTag = co.isCurrentlyChanged
+          ? '<span class="badge badge-warning">Currently Modified</span>'
+          : '<span class="badge badge-provider-vscode">Coupled Companion</span>';
+        const hashes = co.sampleCommitHashes.length > 0
+          ? `<div class="cochange-hashes"><span class="meta-label">Supporting Commits:</span> ${co.sampleCommitHashes.slice(0, 4).map((h: any) => `<span class="hash-pill">${this.escapeHtml(h)}</span>`).join(' ')}</div>`
+          : '';
+
+        return `
+          <div class="cochange-card">
+            <div class="cochange-card-header">
+              <span class="cochange-path">${this.escapeHtml(co.filePath)}</span>
+              ${changedTag}
+              <span class="badge badge-meta" style="margin-left: auto;">${co.sharedCommitCount} shared commit(s)</span>
+            </div>
+            <div class="cochange-meta">Historically coupled with: <strong>${this.escapeHtml(co.historicallyCoupledWith.join(', '))}</strong></div>
+            ${hashes}
+          </div>`;
+      }).join('')}</div>`;
+    }
+
+    // Git commits list
+    let commitsHtml = '<p class="subtle-text">No Git commits found for the selected lines.</p>';
+    if (commits.length > 0) {
+      commitsHtml = `<div class="commit-list">${commits.map((c: any) => {
+        return `
+          <div class="commit-card">
+            <div class="commit-card-header">
+              <span class="hash-pill">${this.escapeHtml(c.shortHash)}</span>
+              <span class="commit-subject">${this.escapeHtml(c.subject)}</span>
+            </div>
+            <div class="commit-meta">
+              <span>Author: <strong>${this.escapeHtml(c.authorName)}</strong> &lt;${this.escapeHtml(c.authorEmail)}&gt;</span>
+              <span>Date: ${this.escapeHtml(c.date)}</span>
+            </div>
+            ${c.body ? `<div class="commit-body">${this.escapeHtml(c.body)}</div>` : ''}
+          </div>`;
+      }).join('')}</div>`;
+    }
+
+    // Diffs html
+    let diffsHtml = '<p class="subtle-text">No diff hunks available for the selected lines.</p>';
+    if (commits.some((c: any) => c.diff)) {
+      diffsHtml = commits
+        .filter((c: any) => c.diff)
+        .map((c: any, idx: number) => {
+          return `
+            <details class="diff-accordion" ${idx === 0 ? 'open' : ''}>
+              <summary class="diff-summary">
+                <span><strong>${this.escapeHtml(c.shortHash)}</strong>: ${this.escapeHtml(c.subject)}</span>
+                <span class="badge badge-meta">${this.escapeHtml(c.date)}</span>
+              </summary>
+              <div class="diff-content">
+                <pre class="diff-pre"><code>${this.escapeHtml(c.diff || '(No diff content)')}</code></pre>
+              </div>
+            </details>`;
+        })
+        .join('');
+    }
+
+    // Suggestions & Fixes HTML
+    let fixSectionHtml = `
+      <div class="clean-card">
+        <span class="badge badge-success" style="margin-bottom: 6px;">No Fixes Required</span>
+        <div style="font-weight: 600; font-size: 13px;">Code selection is functional. No automated patches required.</div>
+        <div class="subtle-text" style="margin-top: 4px;">No syntax or compiler diagnostics detected that warrant a corrective patch.</div>
+      </div>`;
+
+    if (exp?.suggestedImprovementsOrFixes) {
+      const fix = exp.suggestedImprovementsOrFixes;
+      fixSectionHtml = `
+        <div class="unverified-banner">
+          <span class="badge badge-error">[UNVERIFIED - SUGGESTED FIX]</span>
+          <span>This advisory suggestion is generated from Git &amp; diagnostic context. It has <strong>NOT</strong> been automatically executed or verified. Always test before applying.</span>
+        </div>
+        <div class="code-container">
+          <div class="code-header">
+            <span>Suggested Patch</span>
+            <button class="copy-btn" id="unified-copy-btn">Copy Fix</button>
+          </div>
+          <pre class="code-pre"><code id="unified-fix-code">${this.escapeHtml(fix.code)}</code></pre>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Explanation &amp; Rationale</div>
+          <div class="fix-explanation">${this.escapeHtml(fix.explanation)}</div>
+        </div>`;
+    }
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: https:;">
+  <title>GitWhisper: Analyze Code</title>
+  <style>
+    :root {
+      --bg: var(--vscode-editor-background);
+      --fg: var(--vscode-editor-foreground);
+      --card-bg: var(--vscode-sideBar-background, rgba(127,127,127,0.06));
+      --card-border: var(--vscode-widget-border, rgba(127,127,127,0.2));
+      --subtle: var(--vscode-descriptionForeground, rgba(127,127,127,0.8));
+      --accent: var(--vscode-textLink-foreground, #7c3aed);
+      --badge-bg: var(--vscode-badge-background, rgba(127,127,127,0.2));
+      --badge-fg: var(--vscode-badge-foreground, #ffffff);
+      --font-mono: var(--vscode-editor-font-family, Consolas, 'Courier New', monospace);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif);
+      font-size: 13px;
+      line-height: 1.5;
+      padding: 16px 20px 40px 20px;
+      overflow-x: hidden;
+      word-break: break-word;
+    }
+    .header-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+    .brand-title { display: inline-flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; color: var(--fg); }
+    .header-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .badge { display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; line-height: 1.3; }
+    .badge-neutral { background: var(--badge-bg); color: var(--badge-fg); }
+    .badge-provider-vscode { background: rgba(124, 58, 237, 0.16); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.35); }
+    .badge-success { background: rgba(46, 160, 67, 0.18); color: #3fb950; border: 1px solid rgba(63, 185, 80, 0.35); }
+    .badge-warning { background: rgba(210, 153, 34, 0.18); color: #d29922; border: 1px solid rgba(210, 153, 34, 0.35); }
+    .badge-error { background: rgba(248, 81, 73, 0.18); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.35); }
+    .badge-meta { background: var(--card-bg); border: 1px solid var(--card-border); color: var(--subtle); font-family: var(--font-mono); font-size: 10px; }
+
+    .target-bar {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .target-path { font-family: var(--font-mono); font-weight: 600; color: var(--accent); }
+
+    .metric-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .metric-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .metric-label { font-size: 11px; text-transform: uppercase; color: var(--subtle); font-weight: 600; letter-spacing: 0.5px; }
+    .metric-value { font-size: 15px; font-weight: 700; color: var(--fg); }
+
+    .nav-tabs {
+      display: flex;
+      gap: 4px;
+      border-bottom: 1px solid var(--card-border);
+      margin-bottom: 16px;
+      overflow-x: auto;
+    }
+    .tab-button {
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 5px 5px 0 0;
+      color: var(--subtle);
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .tab-button:hover { color: var(--fg); background: var(--card-bg); }
+    .tab-button.active {
+      color: var(--fg);
+      background: var(--card-bg);
+      border-color: var(--card-border) var(--card-border) var(--bg);
+      border-bottom: 2px solid var(--accent);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .section-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+    }
+    .clean-card {
+      background: rgba(46, 160, 67, 0.08);
+      border: 1px solid rgba(63, 185, 80, 0.3);
+      border-radius: 6px;
+      padding: 16px;
+      text-align: left;
+    }
+    .section-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--fg);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .bullet-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .bullet-item { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }
+    .bullet-icon { color: var(--accent); font-weight: 700; }
+
+    .unverified-banner {
+      background: rgba(248, 81, 73, 0.1);
+      border: 1px solid rgba(248, 81, 73, 0.35);
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .code-container {
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .code-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px;
+      background: var(--card-bg);
+      border-bottom: 1px solid var(--card-border);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--subtle);
+    }
+    .copy-btn {
+      background: var(--accent);
+      color: #ffffff;
+      border: none;
+      border-radius: 4px;
+      padding: 3px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .copy-btn:hover { opacity: 0.9; }
+    .code-pre {
+      padding: 12px;
+      margin: 0;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .fix-explanation { font-size: 13px; color: var(--fg); line-height: 1.5; }
+
+    .diag-list, .cochange-list, .commit-list { display: flex; flex-direction: column; gap: 8px; }
+    .diag-card, .cochange-card, .commit-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+    }
+    .diag-card-header, .cochange-card-header, .commit-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+    .diag-message { font-size: 12px; color: var(--fg); }
+    .cochange-path { font-family: var(--font-mono); font-weight: 600; font-size: 12px; color: var(--fg); }
+    .cochange-meta, .commit-meta { font-size: 11px; color: var(--subtle); display: flex; gap: 12px; flex-wrap: wrap; }
+    .cochange-hashes { margin-top: 6px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .hash-pill {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      padding: 1px 6px;
+      border-radius: 3px;
+      color: var(--accent);
+    }
+    .commit-subject { font-weight: 600; font-size: 12px; color: var(--fg); }
+    .commit-body { font-size: 11px; color: var(--subtle); margin-top: 4px; white-space: pre-wrap; }
+
+    .diff-accordion {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    .diff-summary {
+      padding: 8px 12px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--card-bg);
+      user-select: none;
+    }
+    .diff-content { padding: 10px; border-top: 1px solid var(--card-border); background: rgba(0,0,0,0.2); }
+    .diff-pre { margin: 0; font-family: var(--font-mono); font-size: 11px; overflow-x: auto; white-space: pre; }
+    .subtle-text { color: var(--subtle); font-size: 12px; font-style: italic; }
+  </style>
+</head>
+<body>
+  <div class="header-row">
+    <div class="brand-title">
+      ${logoHtml}
+      <span>GitWhisper: Analyze Code</span>
+    </div>
+    <div class="header-badges">
+      <span class="badge ${providerBadgeClass}">${providerLabel}</span>
+      <span class="badge ${isWorkingTreeMod ? 'badge-warning' : 'badge-success'}">${isWorkingTreeMod ? 'Modified Locally' : 'Working Tree Clean'}</span>
+      ${diagList.length > 0 ? `<span class="badge ${errCount > 0 ? 'badge-error' : 'badge-warning'}">${diagList.length} Diagnostic(s)</span>` : '<span class="badge badge-success">0 Diagnostics</span>'}
+      <span class="badge badge-meta">${commits.length} Commit(s)</span>
+      <span class="badge badge-meta">Neo4j: ${result.evidence?.neo4jStatus || 'disabled'}</span>
+      ${durationBadge ? `<span class="badge badge-meta">${durationBadge}</span>` : ''}
+    </div>
+  </div>
+
+  <div class="target-bar">
+    <div>Target: <span class="target-path">${this.escapeHtml(targetFilePath)}</span></div>
+    <div>Lines: <strong>${startLine}–${endLine}</strong> (${totalLines} line(s))</div>
+  </div>
+
+  <div class="metric-strip">
+    <div class="metric-card">
+      <span class="metric-label">Working Tree State</span>
+      <span class="metric-value" style="font-size: 13px;">${isWorkingTreeMod ? 'Modified Uncommitted' : 'Clean / Committed'}</span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Compiler Diagnostics</span>
+      <span class="metric-value">${diagList.length} (${errCount} err, ${warnCount} warn)</span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Git Commits On Lines</span>
+      <span class="metric-value">${commits.length} commit(s)</span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label">Neo4j Co-Changes</span>
+      <span class="metric-value">${coChanges.length} coupled file(s)</span>
+    </div>
+  </div>
+
+  <div class="nav-tabs">
+    <button class="tab-button active" data-tab="tab-overview">Overview</button>
+    <button class="tab-button" data-tab="tab-history">History &amp; Evidence (${commits.length})</button>
+    <button class="tab-button" data-tab="tab-bugs">Bugs &amp; Diagnostics (${diagList.length})</button>
+    <button class="tab-button" data-tab="tab-related">Related Files &amp; Impact (${coChanges.length})</button>
+    <button class="tab-button" data-tab="tab-fixes">Suggestions &amp; Fixes</button>
+  </div>
+
+  <!-- TAB 1: Overview -->
+  <div id="tab-overview" class="tab-panel active">
+    <div class="section-card">
+      <div class="section-title">1. What This Code Does</div>
+      <div style="font-size: 13px; line-height: 1.5; color: var(--fg); white-space: pre-wrap;">${this.escapeHtml(exp?.whatCodeDoes || 'Code selection analyzed.')}</div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">2. Historical Evolution &amp; Why It Changed</div>
+      <div style="font-size: 13px; line-height: 1.5; color: var(--fg); white-space: pre-wrap;">${this.escapeHtml(exp?.whyChangedHistorically || 'Historical commit analysis.')}</div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">Uncertainties &amp; Limitations</div>
+      <ul class="bullet-list">
+        ${(exp?.uncertaintiesAndLimitations || ['Static analysis only. Verify with runtime execution.']).map((u: any) => `
+          <li class="bullet-item">
+            <span class="bullet-icon">&#x25CB;</span>
+            <span style="color: var(--subtle);">${this.escapeHtml(u)}</span>
+          </li>`).join('')}
+      </ul>
+    </div>
+  </div>
+
+  <!-- TAB 2: History & Evidence -->
+  <div id="tab-history" class="tab-panel">
+    <div class="section-card">
+      <div class="section-title">Git Blame Commits On Selection (${commits.length})</div>
+      ${commitsHtml}
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">Diff Hunks for Selected Lines</div>
+      ${diffsHtml}
+    </div>
+
+    ${neo4jCommits.length > 0 ? `
+      <div class="section-card">
+        <div class="section-title">Neo4j Knowledge Graph History (${neo4jCommits.length})</div>
+        <div class="commit-list">
+          ${neo4jCommits.map((c: any) => `
+            <div class="commit-card">
+              <div class="commit-card-header">
+                <span class="hash-pill">${this.escapeHtml(c.shortHash)}</span>
+                <span class="commit-subject">${this.escapeHtml(c.subject)}</span>
+                <span class="badge badge-meta" style="margin-left: auto;">${this.escapeHtml(c.changeType)}</span>
+              </div>
+              <div class="commit-meta">
+                <span>Author: <strong>${this.escapeHtml(c.author)}</strong></span>
+                <span>Date: ${this.escapeHtml(c.date)}</span>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>` : ''}
+  </div>
+
+  <!-- TAB 3: Bugs & Diagnostics -->
+  <div id="tab-bugs" class="tab-panel">
+    <div class="section-card">
+      <div class="section-title">Compiler &amp; Linter Diagnostics (${diagList.length})</div>
+      ${diagnosticsHtml}
+    </div>
+
+    ${exp?.diagnosticsAndIssues?.details && exp.diagnosticsAndIssues.details.length > 0 ? `
+      <div class="section-card">
+        <div class="section-title">Potential Issues &amp; Inconsistencies</div>
+        <ul class="bullet-list">
+          ${exp.diagnosticsAndIssues.details.map((d: any) => `
+            <li class="bullet-item">
+              <span class="bullet-icon">&#x2022;</span>
+              <span>${this.escapeHtml(d)}</span>
+            </li>`).join('')}
+        </ul>
+      </div>` : ''}
+  </div>
+
+  <!-- TAB 4: Related Files & Impact -->
+  <div id="tab-related" class="tab-panel">
+    <div class="section-card">
+      <div class="section-title">Neo4j Co-Changed Companion Files (${coChanges.length})</div>
+      ${coChangeHtml}
+    </div>
+
+    ${exp?.relatedFilesAndImpact && exp.relatedFilesAndImpact.length > 0 ? `
+      <div class="section-card">
+        <div class="section-title">Blast Radius &amp; Impact Analysis</div>
+        <ul class="bullet-list">
+          ${exp.relatedFilesAndImpact.map((rf: any) => `
+            <li class="bullet-item">
+              <span class="bullet-icon">&#x2192;</span>
+              <span><strong>${this.escapeHtml(rf.filePath)}</strong>: ${this.escapeHtml(rf.reason)}</span>
+            </li>`).join('')}
+        </ul>
+      </div>` : ''}
+  </div>
+
+  <!-- TAB 5: Suggestions & Fixes -->
+  <div id="tab-fixes" class="tab-panel">
+    ${fixSectionHtml}
+  </div>
+
+  <script>
+    (function() {
+      const tabs = document.querySelectorAll('.tab-button');
+      const panels = document.querySelectorAll('.tab-panel');
+
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          const targetId = tab.getAttribute('data-tab');
+          tabs.forEach(t => t.classList.remove('active'));
+          panels.forEach(p => p.classList.remove('active'));
+
+          tab.classList.add('active');
+          const activePanel = document.getElementById(targetId);
+          if (activePanel) {
+            activePanel.classList.add('active');
+          }
+        });
+      });
+
+      const copyBtn = document.getElementById('unified-copy-btn');
+      if (copyBtn) {
+        copyBtn.addEventListener('click', () => {
+          const codeEl = document.getElementById('unified-fix-code');
+          if (codeEl) {
+            navigator.clipboard.writeText(codeEl.innerText).then(() => {
+              copyBtn.textContent = 'Copied!';
+              setTimeout(() => { copyBtn.textContent = 'Copy Fix'; }, 2000);
+            });
+          }
+        });
+      }
+    })();
+  </script>
+</body>
+</html>`;
   }
 
   private static escapeHtml(text: string): string {

@@ -11,6 +11,9 @@ import {
   RepositoryPruneResult
 } from '../neo4j/neo4jGraphTypes';
 import { MigrationResult } from '../security/secretManager';
+import { ReviewerResult } from '../reviewer/reviewerTypes';
+import { InvestigationResult } from '../investigation/investigationTypes';
+import { UnifiedAnalysisResult } from '../unified/unifiedTypes';
 
 function getVsCode(): any {
   try {
@@ -522,6 +525,362 @@ export class OutputView {
 
     channel.appendLine(separator);
     channel.appendLine('');
+    channel.show(true);
+  }
+
+  public static showReviewerSummary(result: ReviewerResult): void {
+    const channel = this.getChannel();
+    channel.clear();
+
+    const separator = '='.repeat(80);
+    const subSeparator = '-'.repeat(80);
+
+    channel.appendLine(separator);
+    channel.appendLine('  GITWHISPER BY ORIGINX: CODE REVIEWER (WORKING TREE CHANGES)');
+    channel.appendLine(separator);
+    channel.appendLine(`Repository:    ${result.repoName || 'Current Repository'} (${result.repoRoot || ''})`);
+    channel.appendLine(`Changed Files: ${result.totalChangedFiles} (Staged: ${result.stagedCount}, Unstaged: ${result.unstagedCount}, Untracked: ${result.untrackedCount})`);
+    channel.appendLine(`Diff Size:     ${(result.totalDiffChars / 1024).toFixed(1)} KB`);
+    channel.appendLine(`Neo4j Status:  ${result.neo4jStatus.toUpperCase()}${result.neo4jError ? ` (${result.neo4jError})` : ''}`);
+    channel.appendLine(`AI Review:     ${result.explanationStatus.toUpperCase()}`);
+    channel.appendLine(separator);
+    channel.appendLine('');
+
+    if (result.explanation) {
+      channel.appendLine(subSeparator);
+      channel.appendLine('  AI CODE REVIEW');
+      channel.appendLine(subSeparator);
+      channel.appendLine(`Model: ${result.explanation.model || 'copilot'}`);
+      channel.appendLine('');
+      channel.appendLine('Summary:');
+      channel.appendLine(result.explanation.summary);
+      channel.appendLine('');
+      channel.appendLine('Architectural Impact & Blast Radius:');
+      channel.appendLine(result.explanation.impactAnalysis);
+      channel.appendLine('');
+      if (result.explanation.relatedFilesGuidance) {
+        channel.appendLine('Related Files Guidance:');
+        channel.appendLine(result.explanation.relatedFilesGuidance);
+        channel.appendLine('');
+      }
+      if (result.explanation.reviewChecklist && result.explanation.reviewChecklist.length > 0) {
+        channel.appendLine('Review Checklist:');
+        for (const item of result.explanation.reviewChecklist) {
+          channel.appendLine(`  [ ] ${item}`);
+        }
+        channel.appendLine('');
+      }
+    }
+
+    if (result.relatedFilesWorthInspecting.length > 0) {
+      channel.appendLine(subSeparator);
+      channel.appendLine('  HISTORICALLY CO-CHANGED FILES (NEO4J PROVENANCE)');
+      channel.appendLine(subSeparator);
+      for (const rec of result.relatedFilesWorthInspecting) {
+        const statusTag = rec.isCurrentlyChanged
+          ? '[CURRENTLY MODIFIED]'
+          : '[WORTH INSPECTING - NOT IN CURRENT CHANGES]';
+        channel.appendLine(`* ${rec.filePath} ${statusTag}`);
+        channel.appendLine(`    Shared Commits: ${rec.sharedCommitCount} with ${rec.historicallyCoupledWith.join(', ')}`);
+        if (rec.sampleCommitHashes.length > 0) {
+          channel.appendLine(`    Commit Hashes : ${rec.sampleCommitHashes.join(', ')}`);
+        }
+      }
+      channel.appendLine('');
+    }
+
+    channel.appendLine(subSeparator);
+    channel.appendLine('  CHANGED FILES LIST');
+    channel.appendLine(subSeparator);
+    for (const f of result.changedFiles) {
+      channel.appendLine(`- ${f.filePath} (${f.status.toUpperCase()}, ${(f.diffCharCount / 1024).toFixed(1)}KB)`);
+    }
+
+    channel.appendLine('');
+    channel.appendLine(separator);
+    channel.show(true);
+  }
+
+  public static showInvestigationSummary(result: InvestigationResult): void {
+    const channel = this.getChannel();
+    channel.clear();
+
+    const separator = '='.repeat(80);
+    const subSeparator = '-'.repeat(80);
+
+    const req = result.request;
+    const targetFile = req ? `${req.fileName} (${req.filePath})` : 'Unknown file';
+    const lines = req ? `Lines ${req.startLine}-${req.endLine}` : '';
+    const repoStr = req ? `${req.repoName} (${req.repoId})` : 'Unknown';
+
+    channel.appendLine(separator);
+    channel.appendLine('  GITWHISPER: EVIDENCE-AWARE BUG INVESTIGATION');
+    channel.appendLine(separator);
+    channel.appendLine(`Target File:      ${targetFile}`);
+    channel.appendLine(`Line Range:       ${lines}`);
+    channel.appendLine(`Repository:       ${repoStr}`);
+    channel.appendLine(`Overall Status:   ${result.status.toUpperCase()}`);
+    channel.appendLine(`Diagnostics:      ${result.evidence?.diagnostics?.length || 0} active issue(s)`);
+    channel.appendLine(`Git History:      ${result.evidence?.gitHistory?.commits?.length || 0} commit(s)`);
+    channel.appendLine(`Neo4j Graph:      ${result.evidence?.neo4jStatus?.toUpperCase() || 'DISABLED'}`);
+    channel.appendLine(`AI Explanation:   ${result.explanationStatus.toUpperCase()}${result.explanation?.model ? ` [${result.explanation.model}]` : ''}`);
+    channel.appendLine(`Duration:         ${result.durationMs}ms`);
+    channel.appendLine(separator);
+    channel.appendLine('');
+
+    if (req?.userErrorMessage) {
+      channel.appendLine(subSeparator);
+      channel.appendLine('  REPORTED ERROR / SYMPTOM');
+      channel.appendLine(subSeparator);
+      channel.appendLine(req.userErrorMessage);
+      channel.appendLine('');
+    }
+
+    if (result.evidence?.diagnostics && result.evidence.diagnostics.length > 0) {
+      channel.appendLine(subSeparator);
+      channel.appendLine('  ACTIVE VS CODE DIAGNOSTICS');
+      channel.appendLine(subSeparator);
+      for (const d of result.evidence.diagnostics) {
+        const overlap = d.overlapsSelection ? ' [OVERLAPS SELECTION]' : '';
+        const src = d.source ? ` (${d.source}${d.code ? `:${d.code}` : ''})` : '';
+        channel.appendLine(`• [${d.severity.toUpperCase()}] at L${d.range.startLine}:${d.range.startCharacter}-L${d.range.endLine}:${d.range.endCharacter}${src}${overlap}`);
+        channel.appendLine(`    ${d.message}`);
+      }
+      channel.appendLine('');
+    }
+
+    if (result.explanation) {
+      const exp = result.explanation;
+
+      channel.appendLine(subSeparator);
+      channel.appendLine('  1. OBSERVED FACTS');
+      channel.appendLine(subSeparator);
+      channel.appendLine(exp.observedFacts);
+      channel.appendLine('');
+
+      if (exp.rootCauseHypotheses.length > 0) {
+        channel.appendLine(subSeparator);
+        channel.appendLine('  2. PLAUSIBLE ROOT-CAUSE HYPOTHESES');
+        channel.appendLine(subSeparator);
+        for (const h of exp.rootCauseHypotheses) {
+          channel.appendLine(`• ${h}`);
+        }
+        channel.appendLine('');
+      }
+
+      if (exp.relatedFiles.length > 0) {
+        channel.appendLine(subSeparator);
+        channel.appendLine('  3. RELATED FILES WORTH INSPECTING');
+        channel.appendLine(subSeparator);
+        for (const rf of exp.relatedFiles) {
+          channel.appendLine(`• ${rf.filePath}: ${rf.reason}`);
+        }
+        channel.appendLine('');
+      }
+
+      if (exp.investigationSteps.length > 0) {
+        channel.appendLine(subSeparator);
+        channel.appendLine('  4. PROPOSED INVESTIGATION STEPS');
+        channel.appendLine(subSeparator);
+        for (let i = 0; i < exp.investigationSteps.length; i++) {
+          channel.appendLine(`  ${i + 1}. ${exp.investigationSteps[i]}`);
+        }
+        channel.appendLine('');
+      }
+
+      if (exp.minimalSuggestedFix) {
+        channel.appendLine(subSeparator);
+        channel.appendLine('  5. MINIMAL SUGGESTED FIX [UNVERIFIED - SUGGESTED FIX]');
+        channel.appendLine(subSeparator);
+        channel.appendLine(exp.minimalSuggestedFix.code);
+        channel.appendLine('');
+        channel.appendLine(`Explanation: ${exp.minimalSuggestedFix.explanation}`);
+        channel.appendLine('NOTE: This suggested fix is unverified and has not been tested or applied.');
+        channel.appendLine('');
+      }
+
+      if (exp.relevantTests.length > 0) {
+        channel.appendLine(subSeparator);
+        channel.appendLine('  6. RELEVANT TESTS TO RUN');
+        channel.appendLine(subSeparator);
+        for (const t of exp.relevantTests) {
+          channel.appendLine(`• ${t}`);
+        }
+        channel.appendLine('');
+      }
+
+      if (exp.uncertainties.length > 0) {
+        channel.appendLine(subSeparator);
+        channel.appendLine('  7. UNCERTAINTIES & LIMITATIONS');
+        channel.appendLine(subSeparator);
+        for (const u of exp.uncertainties) {
+          channel.appendLine(`• ${u}`);
+        }
+        channel.appendLine('');
+      }
+    } else if (result.explanationError) {
+      channel.appendLine(subSeparator);
+      channel.appendLine('  AI INVESTIGATION NOTICE');
+      channel.appendLine(subSeparator);
+      channel.appendLine(`Explanation status: ${result.explanationStatus}`);
+      channel.appendLine(`Details: ${result.explanationError}`);
+      channel.appendLine('');
+    }
+
+    if (result.evidence?.coChangeEvidence && result.evidence.coChangeEvidence.length > 0) {
+      channel.appendLine(subSeparator);
+      channel.appendLine('  HISTORICALLY CO-CHANGED FILES (NEO4J BLAST RADIUS)');
+      channel.appendLine(subSeparator);
+      for (const rec of result.evidence.coChangeEvidence) {
+        channel.appendLine(`• ${rec.filePath}`);
+        channel.appendLine(`    Shared Commits: ${rec.sharedCommitCount} with ${rec.historicallyCoupledWith.join(', ')}`);
+        if (rec.sampleCommitHashes.length > 0) {
+          channel.appendLine(`    Supporting Commits: ${rec.sampleCommitHashes.join(', ')}`);
+        }
+      }
+      channel.appendLine('');
+    }
+
+    channel.appendLine(separator);
+    channel.show(true);
+  }
+
+  public static showUnifiedAnalysisSummary(result: UnifiedAnalysisResult): void {
+    const channel = this.getChannel();
+    channel.clear();
+
+    const separator = '='.repeat(80);
+    const subSeparator = '-'.repeat(80);
+
+    const req = result.request;
+    const targetFile = req ? `${req.fileName} (${req.filePath})` : 'Unknown file';
+    const lines = req ? `Lines ${req.startLine}-${req.endLine}` : '';
+    const repoStr = req ? `${req.repoName} (${req.repoId})` : 'Unknown';
+
+    channel.appendLine(separator);
+    channel.appendLine('  GITWHISPER: UNIFIED CODE ANALYSIS');
+    channel.appendLine(separator);
+    channel.appendLine(`Target File:      ${targetFile}`);
+    channel.appendLine(`Line Range:       ${lines}`);
+    channel.appendLine(`Repository:       ${repoStr}`);
+    channel.appendLine(`Execution Status: ${result.status.toUpperCase()}`);
+    channel.appendLine(`Working Tree:     ${result.evidence?.isWorkingTreeModified ? 'MODIFIED LOCALLY' : 'CLEAN'}`);
+    channel.appendLine(`Diagnostics:      ${result.evidence?.diagnostics?.length || 0} active issue(s)`);
+    channel.appendLine(`Git History:      ${result.evidence?.gitHistory?.commits?.length || 0} commit(s)`);
+    channel.appendLine(`Neo4j Status:     ${result.evidence?.neo4jStatus?.toUpperCase() || 'DISABLED'}`);
+    channel.appendLine(`AI Synthesis:     ${result.explanationStatus.toUpperCase()}${result.explanation?.model ? ` [${result.explanation.model}]` : ''}`);
+    channel.appendLine(`Duration:         ${result.durationMs}ms`);
+    channel.appendLine(separator);
+    channel.appendLine('');
+
+    if (result.explanation) {
+      const exp = result.explanation;
+
+      channel.appendLine(subSeparator);
+      channel.appendLine('  1. WHAT THIS CODE DOES');
+      channel.appendLine(subSeparator);
+      channel.appendLine(exp.whatCodeDoes);
+      channel.appendLine('');
+
+      channel.appendLine(subSeparator);
+      channel.appendLine('  2. HISTORICAL EVOLUTION & WHY IT CHANGED');
+      channel.appendLine(subSeparator);
+      channel.appendLine(exp.whyChangedHistorically);
+      channel.appendLine('');
+
+      channel.appendLine(subSeparator);
+      channel.appendLine('  3. DIAGNOSTICS & POTENTIAL ISSUES');
+      channel.appendLine(subSeparator);
+      channel.appendLine(exp.diagnosticsAndIssues.summary);
+      if (exp.diagnosticsAndIssues.details.length > 0) {
+        for (const d of exp.diagnosticsAndIssues.details) {
+          channel.appendLine(`• ${d}`);
+        }
+      }
+      channel.appendLine('');
+
+      if (exp.relatedFilesAndImpact.length > 0) {
+        channel.appendLine(subSeparator);
+        channel.appendLine('  4. RELATED FILES & IMPACT ANALYSIS');
+        channel.appendLine(subSeparator);
+        for (const rf of exp.relatedFilesAndImpact) {
+          const commits = rf.sharedCommitCount ? ` (${rf.sharedCommitCount} shared commits)` : '';
+          channel.appendLine(`• ${rf.filePath}${commits}: ${rf.reason}`);
+        }
+        channel.appendLine('');
+      }
+
+      if (exp.suggestedImprovementsOrFixes) {
+        channel.appendLine(subSeparator);
+        channel.appendLine('  5. SUGGESTIONS & FIXES [UNVERIFIED - SUGGESTED FIX]');
+        channel.appendLine(subSeparator);
+        channel.appendLine(exp.suggestedImprovementsOrFixes.code);
+        channel.appendLine('');
+        channel.appendLine(`Explanation: ${exp.suggestedImprovementsOrFixes.explanation}`);
+        channel.appendLine('NOTE: Advisory patch only. Has not been tested or applied autonomously.');
+        channel.appendLine('');
+      }
+
+      if (exp.supportingEvidence.length > 0) {
+        channel.appendLine(subSeparator);
+        channel.appendLine('  6. SUPPORTING EVIDENCE');
+        channel.appendLine(subSeparator);
+        for (const ev of exp.supportingEvidence) {
+          channel.appendLine(`• ${ev}`);
+        }
+        channel.appendLine('');
+      }
+
+      if (exp.uncertaintiesAndLimitations.length > 0) {
+        channel.appendLine(subSeparator);
+        channel.appendLine('  7. UNCERTAINTIES & LIMITATIONS');
+        channel.appendLine(subSeparator);
+        for (const u of exp.uncertaintiesAndLimitations) {
+          channel.appendLine(`• ${u}`);
+        }
+        channel.appendLine('');
+      }
+    } else {
+      channel.appendLine(subSeparator);
+      channel.appendLine('  LOCAL EVIDENCE SUMMARY (AI NOT ACTIVE)');
+      channel.appendLine(subSeparator);
+      channel.appendLine(`Explanation Status: ${result.explanationStatus}`);
+      if (result.explanationError) {
+        channel.appendLine(`Notice: ${result.explanationError}`);
+      }
+      channel.appendLine('');
+    }
+
+    // Active diagnostics summary
+    if (result.evidence?.diagnostics && result.evidence.diagnostics.length > 0) {
+      channel.appendLine(subSeparator);
+      channel.appendLine('  ACTIVE VS CODE DIAGNOSTICS');
+      channel.appendLine(subSeparator);
+      for (const d of result.evidence.diagnostics) {
+        const overlap = d.overlapsSelection ? ' [OVERLAPS SELECTION]' : '';
+        const src = d.source ? ` (${d.source}${d.code ? `:${d.code}` : ''})` : '';
+        channel.appendLine(`• [${d.severity.toUpperCase()}] at L${d.range.startLine}:${d.range.startCharacter}-L${d.range.endLine}:${d.range.endCharacter}${src}${overlap}`);
+        channel.appendLine(`    ${d.message}`);
+      }
+      channel.appendLine('');
+    }
+
+    // Neo4j Co-Changes
+    if (result.evidence?.neo4jCoChanges && result.evidence.neo4jCoChanges.length > 0) {
+      channel.appendLine(subSeparator);
+      channel.appendLine('  HISTORICALLY CO-CHANGED COMPANION FILES (NEO4J)');
+      channel.appendLine(subSeparator);
+      for (const rec of result.evidence.neo4jCoChanges) {
+        channel.appendLine(`• ${rec.filePath}`);
+        channel.appendLine(`    Shared Commits: ${rec.sharedCommitCount} with ${rec.historicallyCoupledWith.join(', ')}`);
+        if (rec.sampleCommitHashes.length > 0) {
+          channel.appendLine(`    Supporting Commits: ${rec.sampleCommitHashes.join(', ')}`);
+        }
+      }
+      channel.appendLine('');
+    }
+
+    channel.appendLine(separator);
     channel.show(true);
   }
 

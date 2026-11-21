@@ -65,6 +65,13 @@ export function getCommandCenterItems(
       kind: SEPARATOR_KIND
     },
     {
+      id: 'analyze_code',
+      category: 'GENERAL',
+      label: '$(sparkle) GitWhisper: Analyze Code',
+      description: 'Unified analysis: functionality, history, diagnostics & blast radius',
+      detail: 'Primary command: Ctrl+O then Ctrl+X (editor selection) or Command Center'
+    },
+    {
       id: 'explain',
       category: 'GENERAL',
       label: '$(search) Explain Selected Code',
@@ -77,6 +84,20 @@ export function getCommandCenterItems(
       label: '$(files) Explain Multiple Selected Files',
       description: 'Analyze changes across multiple files selected in the Explorer',
       detail: 'Context shortcut: Right-click files in Explorer -> "Why Were These Changed?"'
+    },
+    {
+      id: 'review_working_tree',
+      category: 'GENERAL',
+      label: '$(eye) Review Working Tree Changes (Code Reviewer)',
+      description: 'Analyze staged/unstaged changes with Neo4j co-change impact',
+      detail: 'Runs GitWhisper reviewer journey with blast radius analysis'
+    },
+    {
+      id: 'investigate_bug',
+      category: 'GENERAL',
+      label: '$(bug) Investigate Bug (Evidence-Aware Causal Analysis)',
+      description: 'Trace bug cause using diagnostics, Git line history, and Neo4j blast radius',
+      detail: 'Runs GitWhisper bug investigation journey with minimal suggested fix'
     },
     {
       id: 'enable_auto',
@@ -350,12 +371,24 @@ export async function showCommandCenter(context?: vscode.ExtensionContext): Prom
   }
 
   switch (selected.id) {
+    case 'analyze_code':
+      await vs.commands.executeCommand('originx.analyzeCode');
+      break;
+
     case 'explain':
       await vs.commands.executeCommand('originx.whyWasThisChanged');
       break;
 
     case 'explain_multi':
       await vs.commands.executeCommand('originx.whyWereTheseChanged');
+      break;
+
+    case 'review_working_tree':
+      await vs.commands.executeCommand('originx.reviewWorkingTree');
+      break;
+
+    case 'investigate_bug':
+      await vs.commands.executeCommand('originx.investigateBug');
       break;
 
     case 'enable_auto':

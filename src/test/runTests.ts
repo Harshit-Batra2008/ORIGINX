@@ -63,12 +63,17 @@ import { clearStoredNeo4jPassword, getOrPromptNeo4jCredentials } from '../neo4j/
 import {
   GitGraphCommit,
   GitGraphRepoInfo,
+  Neo4jCoChangeItem,
+  Neo4jCoChangeResult,
   Neo4jCommitEvidence,
   Neo4jFileEvidenceResult
 } from '../neo4j/neo4jGraphTypes';
 import {
   retrieveFileEvidence,
-  DEFAULT_EVIDENCE_LIMIT
+  retrieveCoChangedFiles,
+  DEFAULT_EVIDENCE_LIMIT,
+  DEFAULT_CO_CHANGE_LIMIT,
+  MAX_CO_CHANGE_LIMIT
 } from '../neo4j/neo4jEvidenceRetriever';
 import { OutputView } from '../ui/outputView';
 import { scanAndSanitize, scanPayload } from '../security/redactor';
@@ -120,6 +125,56 @@ import {
 import {
   MultiFileExplainer
 } from '../multiFile/multiFileExplainer';
+import {
+  ReviewerFileChange,
+  ReviewerResult,
+  ReviewerCoChangeGroup,
+  RelatedFileRecommendation
+} from '../reviewer/reviewerTypes';
+import {
+  aggregateCoChangeEvidence,
+  gatherWorkingTreeChanges
+} from '../reviewer/reviewerService';
+import {
+  buildReviewerPrompt,
+  parseReviewerExplanation
+} from '../reviewer/reviewerPrompt';
+import {
+  ReviewerExplainer
+} from '../reviewer/reviewerExplainer';
+import {
+  CollectedDiagnostic,
+  InvestigationEvidencePackage,
+  InvestigationExplanation,
+  InvestigationRequest,
+  InvestigationResult
+} from '../investigation/investigationTypes';
+import {
+  buildInvestigationPrompt,
+  parseInvestigationExplanation
+} from '../investigation/investigationPrompt';
+import {
+  collectDiagnosticsForDocument
+} from '../investigation/investigationService';
+import {
+  InvestigationExplainer
+} from '../investigation/investigationExplainer';
+import {
+  UnifiedAnalysisExplanation,
+  UnifiedAnalysisRequest,
+  UnifiedAnalysisResult,
+  UnifiedEvidenceBundle
+} from '../unified/unifiedTypes';
+import {
+  buildUnifiedAnalysisPrompt,
+  parseUnifiedExplanation
+} from '../unified/unifiedPrompt';
+import {
+  UnifiedExplainer
+} from '../unified/unifiedExplainer';
+import {
+  gatherUnifiedEvidence
+} from '../unified/unifiedService';
 import {
   FileValidationItem,
   MultiFileValidationResult,
@@ -875,10 +930,13 @@ None.
 
     // General items
     const generalItems = items.filter((i) => i.category === 'GENERAL');
-    assert.strictEqual(generalItems.length, 10, 'Must have 10 GENERAL items');
+    assert.strictEqual(generalItems.length, 13, 'Must have 13 GENERAL items');
     const generalIds = generalItems.map((i) => i.id);
+    assert.ok(generalIds.includes('analyze_code'));
     assert.ok(generalIds.includes('explain'));
     assert.ok(generalIds.includes('explain_multi'));
+    assert.ok(generalIds.includes('review_working_tree'));
+    assert.ok(generalIds.includes('investigate_bug'));
     assert.ok(generalIds.includes('enable_auto'));
     assert.ok(generalIds.includes('disable_auto'));
     assert.ok(generalIds.includes('toggle_multi_confirm'));
@@ -1657,14 +1715,14 @@ The exact ticket or product design requirement was not specified in the commit m
       assert.ok(hiddenCommands.includes(cmd), `Sub-command ${cmd} must have when: "false" in commandPalette`);
     }
 
-    // Only whyWasThisChanged and commandCenter must be visible in Command Palette
+    // Only analyzeCode, whyWasThisChanged, reviewWorkingTree, investigateBug, and commandCenter must be visible in Command Palette
     const allCommandIds = pkg.contributes.commands.map((c: any) => c.command);
     const visiblePaletteCommands = allCommandIds.filter((cmd: string) => !hiddenCommands.includes(cmd));
 
     assert.deepStrictEqual(
       visiblePaletteCommands.sort(),
-      ['originx.whyWasThisChanged', 'originx.commandCenter'].sort(),
-      'Command Palette must expose ONLY whyWasThisChanged and commandCenter'
+      ['originx.analyzeCode', 'originx.whyWasThisChanged', 'originx.reviewWorkingTree', 'originx.investigateBug', 'originx.commandCenter'].sort(),
+      'Command Palette must expose ONLY primary commands (analyzeCode, whyWasThisChanged, reviewWorkingTree, investigateBug, commandCenter)'
     );
 
     // Verify zero legacy Gemini commands exist in package.json
@@ -1689,19 +1747,25 @@ The exact ticket or product design requirement was not specified in the commit m
     assert.ok(readme.includes('**GitWhisper** (by team **ORIGINX**)'), 'README must mention team ORIGINX and product GitWhisper');
   });
 
-  await test('package.json contributes.keybindings binds originx.whyWasThisChanged to Ctrl+Alt+H (Cmd+Alt+H on macOS) with editorTextFocus && editorHasSelection', () => {
+  await test('package.json contributes.keybindings binds originx.whyWasThisChanged (Ctrl+Alt+H) and originx.analyzeCode (Ctrl+O Ctrl+X) with editorTextFocus && editorHasSelection', () => {
     const pkgPath = path.resolve(__dirname, '../../package.json');
     const pkgContent = fs.readFileSync(pkgPath, 'utf8');
     const pkg = JSON.parse(pkgContent);
 
     assert.ok(Array.isArray(pkg.contributes.keybindings), 'package.json must contain contributes.keybindings array');
-    assert.strictEqual(pkg.contributes.keybindings.length, 1, 'Must have exactly 1 default keybinding');
+    assert.strictEqual(pkg.contributes.keybindings.length, 2, 'Must have exactly 2 keybindings');
 
-    const binding = pkg.contributes.keybindings[0];
-    assert.strictEqual(binding.command, 'originx.whyWasThisChanged', 'Command must be originx.whyWasThisChanged');
-    assert.strictEqual(binding.key, 'ctrl+alt+h', 'Default Windows/Linux key must be ctrl+alt+h');
-    assert.strictEqual(binding.mac, 'cmd+alt+h', 'Default macOS key must be cmd+alt+h');
-    assert.strictEqual(binding.when, 'editorTextFocus && editorHasSelection', 'when clause must require editorTextFocus && editorHasSelection');
+    const whyBinding = pkg.contributes.keybindings.find((b: any) => b.command === 'originx.whyWasThisChanged');
+    assert.ok(whyBinding, 'Must contain originx.whyWasThisChanged');
+    assert.strictEqual(whyBinding.key, 'ctrl+alt+h', 'Default Windows/Linux key must be ctrl+alt+h');
+    assert.strictEqual(whyBinding.mac, 'cmd+alt+h', 'Default macOS key must be cmd+alt+h');
+    assert.strictEqual(whyBinding.when, 'editorTextFocus && editorHasSelection', 'when clause must require editorTextFocus && editorHasSelection');
+
+    const analyzeBinding = pkg.contributes.keybindings.find((b: any) => b.command === 'originx.analyzeCode');
+    assert.ok(analyzeBinding, 'Must contain originx.analyzeCode');
+    assert.strictEqual(analyzeBinding.key, 'ctrl+o ctrl+x', 'Chord must be ctrl+o ctrl+x');
+    assert.strictEqual(analyzeBinding.mac, 'cmd+o cmd+x', 'macOS chord must be cmd+o cmd+x');
+    assert.strictEqual(analyzeBinding.when, 'editorTextFocus && editorHasSelection', 'when clause must require editorTextFocus && editorHasSelection');
   });
 
   // ====================================================
@@ -5071,6 +5135,333 @@ index 1111111..2222222 100644
     }
   });
 
+  await test('Finale Phase 1: retrieveCoChangedFiles validates inputs and rejects empty parameters without opening session', async () => {
+    let sessionOpened = false;
+    const mockDriver: INeo4jDriver = {
+      session() {
+        sessionOpened = true;
+        return {
+          async run() { return { records: [] }; },
+          async close() {}
+        };
+      },
+      async close() {}
+    };
+
+    // Missing repoId
+    const res1 = await retrieveCoChangedFiles(mockDriver, '', 'src/index.ts');
+    assert.strictEqual(res1.status, 'error');
+    assert.strictEqual(sessionOpened, false);
+    assert.strictEqual(res1.totalCoChangedFiles, 0);
+    assert.ok(res1.error?.includes('Repository identity and file path are required'));
+
+    // Missing filePath
+    const res2 = await retrieveCoChangedFiles(mockDriver, 'org/repo', '   ');
+    assert.strictEqual(res2.status, 'error');
+    assert.strictEqual(sessionOpened, false);
+    assert.strictEqual(res2.totalCoChangedFiles, 0);
+    assert.ok(res2.error?.includes('Repository identity and file path are required'));
+  });
+
+  await test('Finale Phase 1: retrieveCoChangedFiles enforces repository scoping, verified relationship pattern, and parameterized Cypher', async () => {
+    let capturedQuery = '';
+    let capturedParams: any = null;
+
+    const mockDriver: INeo4jDriver = {
+      session() {
+        return {
+          async run(query: string, params: any) {
+            capturedQuery = query;
+            capturedParams = params;
+            return { records: [] };
+          },
+          async close() {}
+        };
+      },
+      async close() {}
+    };
+
+    await retrieveCoChangedFiles(mockDriver, 'coop-task-team/cooptask', 'src/services/taskService.ts', 10, {
+      maxSharedCommitsPerFile: 5
+    });
+
+    // 1. Parameterization verification
+    assert.strictEqual(capturedParams.repoId, 'coop-task-team/cooptask');
+    assert.strictEqual(capturedParams.filePath, 'src/services/taskService.ts');
+    assert.strictEqual(capturedParams.fileId, 'coop-task-team/cooptask:src/services/taskService.ts');
+    assert.strictEqual(capturedParams.limit, 10);
+    assert.strictEqual(capturedParams.maxSharedCommits, 5);
+
+    // 2. Strict verified traversal pattern: (:Repository)-[:HAS_COMMIT]->(:Commit)-[:MODIFIED]->(:File)
+    assert.ok(
+      capturedQuery.includes('MATCH (r:Repository { id: $repoId })-[:HAS_COMMIT]->(c:Commit)-[:MODIFIED]->(target:File)'),
+      'Must use verified relationship traversal pattern'
+    );
+    assert.ok(
+      capturedQuery.includes('MATCH (c)-[:MODIFIED]->(coFile:File)'),
+      'Must traverse from same commit to co-modified file'
+    );
+
+    // 3. Strict repository scoping on all nodes to prevent cross-repo contamination
+    assert.ok(capturedQuery.includes('c.repoId = $repoId'), 'Commit must be repo-scoped');
+    assert.ok(capturedQuery.includes('target.repoId = $repoId'), 'Target file must be repo-scoped');
+    assert.ok(capturedQuery.includes('coFile.repoId = $repoId'), 'Co-changed file must be repo-scoped');
+    assert.ok(capturedQuery.includes('coFile.path <> target.path'), 'Must exclude target file from results');
+
+    // 4. Deterministic ordering & limits
+    assert.ok(capturedQuery.includes('ORDER BY sharedCommitCount DESC, coFile.path ASC'), 'Must order by sharedCommitCount DESC and path ASC');
+    assert.ok(capturedQuery.includes('LIMIT toInteger($limit)'), 'Must enforce parameterized limit');
+
+    // 5. Read-only audit: zero mutating clauses
+    const upper = capturedQuery.toUpperCase();
+    assert.ok(!upper.includes('CREATE '), 'Read-only query must not contain CREATE');
+    assert.ok(!upper.includes('MERGE '), 'Read-only query must not contain MERGE');
+    assert.ok(!upper.includes('SET '), 'Read-only query must not contain SET');
+    assert.ok(!upper.includes('DELETE '), 'Read-only query must not contain DELETE');
+  });
+
+  await test('Finale Phase 1: retrieveCoChangedFiles maps co-changed files, shared commit counts, and supporting commit hashes correctly', async () => {
+    let sessionClosed = false;
+
+    const mockDriver: INeo4jDriver = {
+      session() {
+        return {
+          async run(_query: string, _params: any) {
+            return {
+              records: [
+                {
+                  get: (key: string) => {
+                    const data: Record<string, any> = {
+                      filePath: 'src/models/user.ts',
+                      fileName: 'user.ts',
+                      sharedCommitCount: 3,
+                      sharedCommits: [
+                        {
+                          hash: 'c111111111111111111111111111111111111111',
+                          shortHash: 'c111111',
+                          subject: 'feat: add user profile model and permissions',
+                          committedAt: '2026-10-25T14:30:00.000Z'
+                        },
+                        {
+                          hash: 'c222222222222222222222222222222222222222',
+                          shortHash: 'c222222',
+                          subject: 'refactor: extract token validation helpers',
+                          committedAt: '2026-10-20T10:00:00.000Z'
+                        },
+                        {
+                          hash: 'c333333333333333333333333333333333333333',
+                          shortHash: 'c333333',
+                          subject: 'fix: null safety check on user role lookup',
+                          committedAt: '2026-10-15T08:00:00.000Z'
+                        }
+                      ],
+                      commitHashes: ['c111111', 'c222222', 'c333333']
+                    };
+                    return data[key];
+                  }
+                },
+                {
+                  get: (key: string) => {
+                    const data: Record<string, any> = {
+                      filePath: 'src/utils/token.ts',
+                      fileName: 'token.ts',
+                      sharedCommitCount: 1,
+                      sharedCommits: [
+                        {
+                          hash: 'c222222222222222222222222222222222222222',
+                          shortHash: 'c222222',
+                          subject: 'refactor: extract token validation helpers',
+                          committedAt: '2026-10-20T10:00:00.000Z'
+                        }
+                      ],
+                      commitHashes: ['c222222']
+                    };
+                    return data[key];
+                  }
+                }
+              ]
+            };
+          },
+          async close() {
+            sessionClosed = true;
+          }
+        };
+      },
+      async close() {}
+    };
+
+    const result = await retrieveCoChangedFiles(mockDriver, 'test-team/core-repo', 'src/auth/service.ts', 10);
+
+    assert.strictEqual(result.status, 'ok');
+    assert.strictEqual(result.repositoryId, 'test-team/core-repo');
+    assert.strictEqual(result.targetFilePath, 'src/auth/service.ts');
+    assert.strictEqual(result.totalCoChangedFiles, 2);
+    assert.strictEqual(result.coChangedFiles.length, 2);
+    assert.strictEqual(sessionClosed, true, 'Session must be closed on success');
+    assert.ok(result.durationMs >= 0);
+
+    // Verify first co-changed file
+    const f1 = result.coChangedFiles[0];
+    assert.strictEqual(f1.filePath, 'src/models/user.ts');
+    assert.strictEqual(f1.fileName, 'user.ts');
+    assert.strictEqual(f1.sharedCommitCount, 3);
+    assert.deepStrictEqual(f1.commitHashes, ['c111111', 'c222222', 'c333333']);
+    assert.strictEqual(f1.sharedCommits.length, 3);
+    assert.strictEqual(f1.sharedCommits[0].shortHash, 'c111111');
+    assert.strictEqual(f1.sharedCommits[0].subject, 'feat: add user profile model and permissions');
+
+    // Verify second co-changed file
+    const f2 = result.coChangedFiles[1];
+    assert.strictEqual(f2.filePath, 'src/utils/token.ts');
+    assert.strictEqual(f2.fileName, 'token.ts');
+    assert.strictEqual(f2.sharedCommitCount, 1);
+    assert.deepStrictEqual(f2.commitHashes, ['c222222']);
+    assert.strictEqual(f2.sharedCommits.length, 1);
+  });
+
+  await test('Finale Phase 1: retrieveCoChangedFiles returns status "ok" with empty coChangedFiles when file has no co-changes', async () => {
+    let sessionClosed = false;
+    const mockDriver: INeo4jDriver = {
+      session() {
+        return {
+          async run() {
+            return { records: [] };
+          },
+          async close() {
+            sessionClosed = true;
+          }
+        };
+      },
+      async close() {}
+    };
+
+    const result = await retrieveCoChangedFiles(mockDriver, 'solo-repo', 'standalone/isolated.ts');
+    assert.strictEqual(result.status, 'ok');
+    assert.strictEqual(result.targetFilePath, 'standalone/isolated.ts');
+    assert.strictEqual(result.coChangedFiles.length, 0);
+    assert.strictEqual(result.totalCoChangedFiles, 0);
+    assert.strictEqual(result.error, undefined);
+    assert.strictEqual(sessionClosed, true);
+    assert.ok(result.durationMs >= 0);
+  });
+
+  await test('Finale Phase 1: retrieveCoChangedFiles applies safe fallbacks for missing record fields and auto-derives fileName', async () => {
+    const mockDriver: INeo4jDriver = {
+      session() {
+        return {
+          async run() {
+            return {
+              records: [
+                {
+                  get: (key: string) => {
+                    const data: Record<string, any> = {
+                      filePath: 'packages/core/src/config.ts',
+                      fileName: null, // missing fileName, should derive from filePath
+                      sharedCommitCount: { low: 2, high: 0 }, // Neo4j Integer mock
+                      sharedCommits: [
+                        {
+                          hash: 'a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0',
+                          shortHash: null, // should fall back to first 7 chars
+                          subject: null, // should fall back to default
+                          committedAt: null
+                        }
+                      ],
+                      commitHashes: null
+                    };
+                    return data[key];
+                  }
+                }
+              ]
+            };
+          },
+          async close() {}
+        };
+      },
+      async close() {}
+    };
+
+    const result = await retrieveCoChangedFiles(mockDriver, 'my-repo', 'packages/core/src/index.ts');
+    assert.strictEqual(result.status, 'ok');
+    assert.strictEqual(result.coChangedFiles.length, 1);
+
+    const item = result.coChangedFiles[0];
+    assert.strictEqual(item.filePath, 'packages/core/src/config.ts');
+    assert.strictEqual(item.fileName, 'config.ts', 'Missing fileName must be derived from filePath basename');
+    assert.strictEqual(item.sharedCommitCount, 2, 'Neo4j Integer low/high must be converted to number');
+    assert.strictEqual(item.sharedCommits[0].shortHash, 'a9b8c7d', 'Missing shortHash must fall back to first 7 chars of hash');
+    assert.strictEqual(item.sharedCommits[0].subject, 'No commit subject', 'Missing subject must fall back to default');
+    assert.deepStrictEqual(item.commitHashes, ['a9b8c7d']);
+  });
+
+  await test('Finale Phase 1: retrieveCoChangedFiles normalizes Windows paths and bounds limits to [1, 50]', async () => {
+    let capturedParams: any = null;
+    const mockDriver: INeo4jDriver = {
+      session() {
+        return {
+          async run(_q: string, params: any) {
+            capturedParams = params;
+            return { records: [] };
+          },
+          async close() {}
+        };
+      },
+      async close() {}
+    };
+
+    // Test Windows backslashes normalization and limit upper bound
+    const res1 = await retrieveCoChangedFiles(mockDriver, 'my-repo', 'src\\routes\\auth\\session.ts', 500, {
+      maxSharedCommitsPerFile: 200
+    });
+    assert.strictEqual(res1.targetFilePath, 'src/routes/auth/session.ts');
+    assert.strictEqual(capturedParams.filePath, 'src/routes/auth/session.ts');
+    assert.strictEqual(capturedParams.fileId, 'my-repo:src/routes/auth/session.ts');
+    assert.strictEqual(capturedParams.limit, 50, 'Limit above 50 must be clamped to MAX_CO_CHANGE_LIMIT (50)');
+    assert.strictEqual(capturedParams.maxSharedCommits, 50, 'maxSharedCommits above 50 must be clamped to 50');
+
+    // Test lower bound clamping
+    await retrieveCoChangedFiles(mockDriver, 'my-repo', 'src/index.ts', 0, {
+      maxSharedCommitsPerFile: 0
+    });
+    assert.strictEqual(capturedParams.limit, 1, 'Limit of 0 must be clamped to 1');
+    assert.strictEqual(capturedParams.maxSharedCommits, 1, 'maxSharedCommits of 0 must be clamped to 1');
+
+    await retrieveCoChangedFiles(mockDriver, 'my-repo', 'src/index.ts', -10, {
+      maxSharedCommitsPerFile: -5
+    });
+    assert.strictEqual(capturedParams.limit, 1, 'Negative limit must be clamped to 1');
+    assert.strictEqual(capturedParams.maxSharedCommits, 1, 'Negative maxSharedCommits must be clamped to 1');
+  });
+
+  await test('Finale Phase 1: retrieveCoChangedFiles redacts credentials on error and guarantees session is closed', async () => {
+    let sessionClosed = false;
+    process.env.NEO4J_PASSWORD = 'supersecret_aura_cochange_pw_777';
+
+    const mockDriver: INeo4jDriver = {
+      session() {
+        return {
+          async run() {
+            throw new Error('Database authentication failure on neo4j+s://aura.io with password supersecret_aura_cochange_pw_777');
+          },
+          async close() {
+            sessionClosed = true;
+          }
+        };
+      },
+      async close() {}
+    };
+
+    try {
+      const result = await retrieveCoChangedFiles(mockDriver, 'repo', 'src/secret.ts');
+      assert.strictEqual(result.status, 'error');
+      assert.strictEqual(sessionClosed, true, 'Session must be closed on error');
+      assert.strictEqual(result.totalCoChangedFiles, 0);
+      assert.ok(!result.error?.includes('supersecret_aura_cochange_pw_777'), 'Error must not leak database password');
+      assert.ok(result.error?.includes('[REDACTED_PASSWORD]'), 'Password must be redacted');
+    } finally {
+      delete process.env.NEO4J_PASSWORD;
+    }
+  });
+
   await test('Phase 5C.1: OutputView.showFileEvidence formats evidence results without throwing', () => {
     // Populated evidence
     const populatedResult: Neo4jFileEvidenceResult = {
@@ -6052,6 +6443,1525 @@ None.`;
     );
     assert.ok(gitGraphSlice.includes('No Neo4j Graph Evidence'), 'Empty Neo4j graph tab displays clean empty state title');
     assert.ok(gitGraphSlice.includes('No graph nodes were found for this file in Neo4j AuraDB.'), 'Empty Neo4j graph tab displays helpful instruction');
+  });
+
+  // ====================================================
+  // 17. Finale Phase 2: Code Reviewer Journey Tests
+  // ====================================================
+
+  await test('Finale Phase 2: aggregateCoChangeEvidence clearly distinguishes currently changed files from historical co-changes', () => {
+    const changedFiles: ReviewerFileChange[] = [
+      {
+        filePath: 'src/auth/service.ts',
+        fileName: 'service.ts',
+        status: 'staged',
+        diff: '+function login() {}',
+        diffCharCount: 20,
+        isBinary: false,
+        isUntracked: false
+      },
+      {
+        filePath: 'src/styles/login.css',
+        fileName: 'login.css',
+        status: 'unstaged',
+        diff: '+.btn { color: red; }',
+        diffCharCount: 21,
+        isBinary: false,
+        isUntracked: false
+      }
+    ];
+
+    const coChangeGroups: ReviewerCoChangeGroup[] = [
+      {
+        targetFilePath: 'src/auth/service.ts',
+        targetFileName: 'service.ts',
+        coChangedFiles: [
+          {
+            filePath: 'src/models/user.ts', // NOT in changedFiles -> should be isCurrentlyChanged === false
+            fileName: 'user.ts',
+            sharedCommitCount: 5,
+            commitHashes: ['a1b2c3d', 'e4f5a6b'],
+            sharedCommits: [
+              { hash: 'a1b2c3d4e5f6', shortHash: 'a1b2c3d', subject: 'feat: add user model' }
+            ]
+          },
+          {
+            filePath: 'src/styles/login.css', // IN changedFiles -> should be isCurrentlyChanged === true
+            fileName: 'login.css',
+            sharedCommitCount: 2,
+            commitHashes: ['9988776'],
+            sharedCommits: [
+              { hash: '998877665544', shortHash: '9988776', subject: 'style: update login form' }
+            ]
+          }
+        ]
+      }
+    ];
+
+    const recommendations = aggregateCoChangeEvidence(changedFiles, coChangeGroups);
+    assert.strictEqual(recommendations.length, 2);
+
+    // Un-modified companion must be sorted first as a priority blast-radius inspection
+    const unModified = recommendations[0];
+    assert.strictEqual(unModified.filePath, 'src/models/user.ts');
+    assert.strictEqual(unModified.isCurrentlyChanged, false);
+    assert.strictEqual(unModified.sharedCommitCount, 5);
+    assert.deepStrictEqual(unModified.sampleCommitHashes, ['a1b2c3d', 'e4f5a6b']);
+    assert.deepStrictEqual(unModified.historicallyCoupledWith, ['src/auth/service.ts']);
+
+    // Modified companion is tagged as already included
+    const modified = recommendations[1];
+    assert.strictEqual(modified.filePath, 'src/styles/login.css');
+    assert.strictEqual(modified.isCurrentlyChanged, true);
+    assert.strictEqual(modified.sharedCommitCount, 2);
+  });
+
+  await test('Finale Phase 2: buildReviewerPrompt fences diffs, lists changed files and incorporates Neo4j blast radius', () => {
+    const changedFiles: ReviewerFileChange[] = [
+      {
+        filePath: 'src/api.ts',
+        fileName: 'api.ts',
+        status: 'both',
+        diff: '+const API_URL = "https://api.example.com";',
+        diffCharCount: 42,
+        isBinary: false,
+        isUntracked: false
+      }
+    ];
+
+    const recommendations: RelatedFileRecommendation[] = [
+      {
+        filePath: 'src/client.ts',
+        fileName: 'client.ts',
+        historicallyCoupledWith: ['src/api.ts'],
+        sharedCommitCount: 4,
+        sampleCommitHashes: ['1122334', '5566778'],
+        sampleCommitSubjects: ['feat: update api client endpoints'],
+        isCurrentlyChanged: false
+      }
+    ];
+
+    const prompt = buildReviewerPrompt(changedFiles, recommendations);
+
+    // Verify sections and grounding constraints
+    assert.ok(prompt.includes('GitWhisper Code Reviewer'));
+    assert.ok(prompt.includes('STRICT GROUNDING & EVIDENCE RULES'));
+    assert.ok(prompt.includes('DO NOT label historical co-changes as confirmed defects'));
+    assert.ok(prompt.includes('CURRENT WORKING TREE CHANGES'));
+    assert.ok(prompt.includes('File: src/api.ts (Status: BOTH)'));
+    assert.ok(prompt.includes('+const API_URL'));
+    assert.ok(prompt.includes('HISTORICAL CO-CHANGE EVIDENCE (NEO4J KNOWLEDGE GRAPH)'));
+    assert.ok(prompt.includes('src/client.ts'));
+    assert.ok(prompt.includes('NOT MODIFIED IN CURRENT WORKING TREE (WORTH INSPECTING)'));
+    assert.ok(prompt.includes('Supporting commits: 1122334, 5566778'));
+  });
+
+  await test('Finale Phase 2: parseReviewerExplanation parses all 5 reviewer sections and formats checklist items', () => {
+    const rawAiOutput = `## Review Summary
+Refactored authentication tokens and updated login CSS to modern Flexbox styling.
+
+## Architectural Impact & Blast Radius
+Changes affect client-side authentication handshakes and UI presentation.
+No breaking API contracts were introduced.
+
+## Related Files Worth Inspecting
+User model (src/models/user.ts) frequently co-changes with auth service; verify user session serialization is compatible.
+
+## Review Checklist
+- [ ] Verify CSRF token handling in session refresh
+- [ ] Check responsive layout on small screens
+- [ ] Confirm no tokens are persisted in localStorage
+
+## Uncertainty & Limitations
+Review is based on uncommitted local diffs; integration tests should be run prior to merge.`;
+
+    const parsed = parseReviewerExplanation(rawAiOutput, 'copilot/gpt-4o');
+
+    assert.ok(parsed.summary.includes('Refactored authentication tokens'));
+    assert.ok(parsed.impactAnalysis.includes('Changes affect client-side authentication'));
+    assert.ok(parsed.relatedFilesGuidance.includes('User model (src/models/user.ts)'));
+    assert.strictEqual(parsed.reviewChecklist.length, 3);
+    assert.strictEqual(parsed.reviewChecklist[0], 'Verify CSRF token handling in session refresh');
+    assert.strictEqual(parsed.reviewChecklist[1], 'Check responsive layout on small screens');
+    assert.strictEqual(parsed.reviewChecklist[2], 'Confirm no tokens are persisted in localStorage');
+    assert.ok(parsed.uncertaintyNotes.includes('Review is based on uncommitted local diffs'));
+    assert.strictEqual(parsed.model, 'copilot/gpt-4o');
+  });
+
+  await test('Finale Phase 2: parseReviewerExplanation applies safe defaults when sections are missing', () => {
+    const rawPartial = `## Review Summary
+Quick fix.`;
+
+    const parsed = parseReviewerExplanation(rawPartial, 'mock-model');
+
+    assert.strictEqual(parsed.summary, 'Quick fix.');
+    assert.strictEqual(parsed.impactAnalysis, 'Changes affect modified files locally.');
+    assert.strictEqual(parsed.relatedFilesGuidance, 'No specific co-change concerns noted.');
+    assert.strictEqual(parsed.reviewChecklist.length, 0);
+    assert.strictEqual(parsed.uncertaintyNotes, 'Working tree review based on available uncommitted diffs.');
+
+    const parsedEmpty = parseReviewerExplanation('', 'mock-model');
+    assert.strictEqual(parsedEmpty.summary, 'No review explanation provided.');
+  });
+
+  await test('Finale Phase 2: ReviewerExplainer blocks secret-containing diffs with security scan', async () => {
+    let lmCalled = false;
+    const mockLmProvider: ILanguageModelProvider = {
+      isSupported: () => true,
+      selectChatModels: async () => [
+        {
+          id: 'test-model',
+          name: 'Test Model',
+          vendor: 'test',
+          family: 'gpt-4o',
+          version: '1',
+          maxInputTokens: 8000,
+          async sendRequest() {
+            lmCalled = true;
+            return { stream: (async function* () { yield 'OK'; })() } as any;
+          }
+        }
+      ]
+    };
+
+    const explainer = new ReviewerExplainer(mockLmProvider);
+
+    const sensitiveFiles: ReviewerFileChange[] = [
+      {
+        filePath: 'src/config.ts',
+        fileName: 'config.ts',
+        status: 'staged',
+        diff: '+const awsKey = "AKIAIOSFODNN7EXAMPLE";', // Leaked AWS key!
+        diffCharCount: 40,
+        isBinary: false,
+        isUntracked: false
+      }
+    ];
+
+    const result = await explainer.explainWorkingTreeChanges(sensitiveFiles, []);
+
+    assert.strictEqual(result.status, 'blocked_security');
+    assert.ok(result.error?.includes('Security scan blocked request'));
+    assert.ok(result.error?.includes('AWS Access Key ID'));
+    assert.strictEqual(lmCalled, false, 'LM API must NEVER be invoked when credentials are detected');
+  });
+
+  await test('Finale Phase 2: ReviewerExplainer handles missing language model gracefully', async () => {
+    const mockLmProvider: ILanguageModelProvider = {
+      isSupported: () => true,
+      selectChatModels: async () => [] // Zero models found
+    };
+
+    const explainer = new ReviewerExplainer(mockLmProvider);
+
+    const safeFiles: ReviewerFileChange[] = [
+      {
+        filePath: 'src/app.ts',
+        fileName: 'app.ts',
+        status: 'unstaged',
+        diff: '+console.log("clean code");',
+        diffCharCount: 28,
+        isBinary: false,
+        isUntracked: false
+      }
+    ];
+
+    const result = await explainer.explainWorkingTreeChanges(safeFiles, []);
+
+    assert.strictEqual(result.status, 'no_model');
+    assert.ok(result.error?.includes('language models are available'));
+    assert.strictEqual(result.diagnostics?.category, 'NOT_FOUND');
+  });
+
+  await test('Finale Phase 2: ReviewerExplainer handles user cancellation cleanly', async () => {
+    const cancellationToken = {
+      isCancellationRequested: true,
+      onCancellationRequested: () => ({ dispose: () => {} })
+    };
+
+    const mockLmProvider: ILanguageModelProvider = {
+      isSupported: () => true,
+      selectChatModels: async () => []
+    };
+
+    const explainer = new ReviewerExplainer(mockLmProvider);
+
+    const files: ReviewerFileChange[] = [
+      {
+        filePath: 'src/app.ts',
+        fileName: 'app.ts',
+        status: 'staged',
+        diff: '+const x = 1;',
+        diffCharCount: 13,
+        isBinary: false,
+        isUntracked: false
+      }
+    ];
+
+    const result = await explainer.explainWorkingTreeChanges(files, [], { cancellationToken });
+    assert.strictEqual(result.status, 'cancelled');
+  });
+
+  await test('Finale Phase 2: WebviewView.renderReviewerHtml renders working tree metrics, tabs, and co-change alerts', () => {
+    const reviewerResult: ReviewerResult = {
+      status: 'ok',
+      repoRoot: '/workspace/my-repo',
+      repoId: 'my-org/my-repo',
+      repoName: 'my-repo',
+      changedFiles: [
+        {
+          filePath: 'src/auth.ts',
+          fileName: 'auth.ts',
+          status: 'staged',
+          diff: '+export function auth() {}',
+          diffCharCount: 27,
+          isBinary: false,
+          isUntracked: false
+        },
+        {
+          filePath: 'src/untracked.ts',
+          fileName: 'untracked.ts',
+          status: 'untracked',
+          diff: '+const untracked = true;',
+          diffCharCount: 24,
+          isBinary: false,
+          isUntracked: true
+        }
+      ],
+      totalChangedFiles: 2,
+      totalDiffChars: 51,
+      stagedCount: 1,
+      unstagedCount: 0,
+      untrackedCount: 1,
+      neo4jStatus: 'ok',
+      coChangeEvidence: [],
+      relatedFilesWorthInspecting: [
+        {
+          filePath: 'src/models/user.ts',
+          fileName: 'user.ts',
+          historicallyCoupledWith: ['src/auth.ts'],
+          sharedCommitCount: 3,
+          sampleCommitHashes: ['a1b2c3d'],
+          sampleCommitSubjects: ['feat: add user model'],
+          isCurrentlyChanged: false
+        }
+      ],
+      explanationStatus: 'ok',
+      explanation: {
+        summary: 'Added authentication function and untracked config.',
+        impactAnalysis: 'Affects login pathways.',
+        reviewChecklist: ['Verify auth return types', 'Check untracked file handling'],
+        relatedFilesGuidance: 'user.ts co-changes with auth.ts; verify user session structure.',
+        uncertaintyNotes: 'Uncommitted working tree changes.',
+        model: 'copilot/gpt-4o'
+      },
+      durationMs: 1200
+    };
+
+    const html = WebviewView.renderReviewerHtml(reviewerResult);
+
+    // Verify key UI elements
+    assert.ok(html.includes('GitWhisper Code Reviewer'), 'Must contain header title');
+    assert.ok(html.includes('copilot/gpt-4o'), 'Must contain model badge');
+    assert.ok(html.includes('my-repo'), 'Must contain repository badge');
+    assert.ok(html.includes('Changed Files'), 'Must contain Changed Files metric');
+    assert.ok(html.includes('Diff Volume'), 'Must contain Diff Volume metric');
+    assert.ok(html.includes('Blast Radius Warning'), 'Must contain Blast Radius Warning');
+    assert.ok(html.includes('1 un-modified companion(s)'), 'Must identify un-modified companion count');
+    assert.ok(html.includes('Blast Radius Alert'), 'Must display Blast Radius Alert badge');
+    assert.ok(html.includes('src/models/user.ts'), 'Must cite companion file path');
+    assert.ok(html.includes('a1b2c3d'), 'Must cite commit hash');
+    assert.ok(html.includes('Verify auth return types'), 'Must include checklist item 1');
+    assert.ok(html.includes('Check untracked file handling'), 'Must include checklist item 2');
+    assert.ok(html.includes('data-tab="rev-panel-review"'), 'Must contain tab navigation');
+    assert.ok(html.includes('data-tab="rev-panel-cochange"'), 'Must contain co-change tab');
+    assert.ok(html.includes('data-tab="rev-panel-diffs"'), 'Must contain diffs tab');
+    assert.ok(!html.includes('<script>alert'), 'Must be XSS safe');
+  });
+
+  await test('Finale Phase 2: WebviewView.renderReviewerHtml renders clean working tree state for zero changes', () => {
+    const emptyResult: ReviewerResult = {
+      status: 'no_changes',
+      repoRoot: '/workspace/clean-repo',
+      repoId: 'clean-org/clean-repo',
+      repoName: 'clean-repo',
+      changedFiles: [],
+      totalChangedFiles: 0,
+      totalDiffChars: 0,
+      stagedCount: 0,
+      unstagedCount: 0,
+      untrackedCount: 0,
+      neo4jStatus: 'no_records',
+      coChangeEvidence: [],
+      relatedFilesWorthInspecting: [],
+      explanationStatus: 'empty_diff',
+      durationMs: 150
+    };
+
+    const html = WebviewView.renderReviewerHtml(emptyResult);
+    assert.ok(html.includes('Working Tree Clean'), 'Must render Working Tree Clean title');
+    assert.ok(html.includes('No staged, unstaged, or untracked changes were detected'), 'Must render helpful message');
+  });
+
+  await test('Finale Phase 2: OutputView.showReviewerSummary formats reviewer results without throwing', () => {
+    const sampleResult: ReviewerResult = {
+      status: 'ok',
+      repoRoot: '/workspace/repo',
+      repoId: 'repo-id',
+      repoName: 'my-repo',
+      changedFiles: [
+        {
+          filePath: 'src/main.ts',
+          fileName: 'main.ts',
+          status: 'staged',
+          diff: '+const x = 1;',
+          diffCharCount: 13,
+          isBinary: false,
+          isUntracked: false
+        }
+      ],
+      totalChangedFiles: 1,
+      totalDiffChars: 13,
+      stagedCount: 1,
+      unstagedCount: 0,
+      untrackedCount: 0,
+      neo4jStatus: 'ok',
+      coChangeEvidence: [],
+      relatedFilesWorthInspecting: [
+        {
+          filePath: 'src/helper.ts',
+          fileName: 'helper.ts',
+          historicallyCoupledWith: ['src/main.ts'],
+          sharedCommitCount: 2,
+          sampleCommitHashes: ['9988776'],
+          sampleCommitSubjects: ['feat: update helpers'],
+          isCurrentlyChanged: false
+        }
+      ],
+      explanationStatus: 'ok',
+      explanation: {
+        summary: 'Main module updated.',
+        impactAnalysis: 'Low impact.',
+        reviewChecklist: ['Check exports'],
+        relatedFilesGuidance: 'Check helper.ts',
+        uncertaintyNotes: 'None',
+        model: 'copilot/gpt-4o'
+      },
+      durationMs: 400
+    };
+
+    assert.doesNotThrow(() => {
+      OutputView.showReviewerSummary(sampleResult);
+    });
+  });
+
+  // ====================================================
+  // 17. Finale Phase 3: Evidence-Aware Bug Investigation Tests
+  // ====================================================
+  await test('Finale Phase 3: collectDiagnosticsForDocument normalizes severity, line numbers, and detects selection overlap', () => {
+    const rawDiags = [
+      {
+        message: 'Variable foo is unused',
+        severity: 1, // Warning
+        range: {
+          start: { line: 9, character: 4 }, // L10 (0-indexed 9)
+          end: { line: 9, character: 7 }
+        },
+        source: 'eslint',
+        code: 'no-unused-vars'
+      },
+      {
+        message: 'Cannot read properties of undefined',
+        severity: 0, // Error
+        range: {
+          start: { line: 14, character: 8 }, // L15
+          end: { line: 14, character: 20 }
+        },
+        source: 'ts',
+        code: 2532
+      },
+      {
+        message: 'File-level hint',
+        severity: 3, // Hint
+        range: {
+          start: { line: 1, character: 0 },
+          end: { line: 1, character: 5 }
+        }
+      }
+    ];
+
+    // Selected lines: 12 to 20
+    const normalized = collectDiagnosticsForDocument(undefined, 12, 20, rawDiags);
+    assert.strictEqual(normalized.length, 3, 'Must return all 3 diagnostics');
+
+    // Overlapping diagnostic must come first
+    assert.strictEqual(normalized[0].overlapsSelection, true, 'L15 error must overlap selection [12-20]');
+    assert.strictEqual(normalized[0].severity, 'error', 'Severity 0 must map to error');
+    assert.strictEqual(normalized[0].range.startLine, 15, 'Line 9 (0-indexed) must become line 15 (1-indexed)');
+    assert.strictEqual(normalized[0].code, '2532', 'Numeric code must be converted to string');
+
+    // Warning on L10 does not overlap selection [12-20]
+    assert.strictEqual(normalized[1].overlapsSelection, false, 'L10 warning does not overlap [12-20]');
+    assert.strictEqual(normalized[1].severity, 'warning');
+  });
+
+  await test('Finale Phase 3: collectDiagnosticsForDocument handles empty or invalid diagnostics gracefully', () => {
+    const empty = collectDiagnosticsForDocument(undefined, 1, 10, []);
+    assert.deepStrictEqual(empty, []);
+
+    const invalid = collectDiagnosticsForDocument(undefined, 1, 10, [null, undefined, {} as any]);
+    assert.deepStrictEqual(invalid, []);
+  });
+
+  await test('Finale Phase 3: buildInvestigationPrompt fences code, incorporates symptom, diagnostics, Git diffs, and Neo4j co-changes', () => {
+    const evidence: InvestigationEvidencePackage = {
+      request: {
+        filePath: 'src/auth/session.ts',
+        fileName: 'session.ts',
+        startLine: 42,
+        endLine: 45,
+        selectedCode: 'const token = req.headers["authorization"];\nvalidateToken(token);',
+        userErrorMessage: 'TypeError: validateToken is not a function',
+        repoRoot: '/workspace/app',
+        repoId: 'repo-abc',
+        repoName: 'my-app'
+      },
+      diagnostics: [
+        {
+          message: 'validateToken may be undefined',
+          severity: 'error',
+          range: { startLine: 43, startCharacter: 1, endLine: 43, endCharacter: 14 },
+          source: 'ts',
+          code: '2722',
+          overlapsSelection: true
+        }
+      ],
+      gitHistory: {
+        status: 'ok',
+        selection: {
+          filePath: '/workspace/app/src/auth/session.ts',
+          fileName: 'session.ts',
+          startLine: 42,
+          endLine: 45,
+          selectedText: 'validateToken(token);'
+        },
+        commits: [
+          {
+            hash: '11223344556677889900aabbccddeeff11223344',
+            shortHash: '1122334',
+            authorName: 'Dev Alice',
+            authorEmail: 'alice@example.com',
+            date: '2026-11-20',
+            subject: 'refactor: split token validation into helper',
+            body: 'Separated token validation logic.',
+            diff: '-import { validateToken } from "./jwt";\n+import * as jwt from "./jwt";'
+          }
+        ]
+      },
+      coChangeEvidence: [
+        {
+          filePath: 'src/auth/jwt.ts',
+          fileName: 'jwt.ts',
+          historicallyCoupledWith: ['src/auth/session.ts'],
+          sharedCommitCount: 5,
+          sampleCommitHashes: ['1122334'],
+          sampleCommitSubjects: ['refactor: split token validation into helper'],
+          isCurrentlyChanged: false
+        }
+      ],
+      neo4jStatus: 'ok'
+    };
+
+    const prompt = buildInvestigationPrompt(evidence);
+    assert.ok(prompt.includes('GitWhisper by ORIGINX'), 'Must include GitWhisper branding');
+    assert.ok(prompt.includes('Understand the change. Trace the impact. Fix with context.'), 'Must include product direction');
+    assert.ok(prompt.includes('TypeError: validateToken is not a function'), 'Must include user error symptom');
+    assert.ok(prompt.includes('validateToken may be undefined'), 'Must include active diagnostic');
+    assert.ok(prompt.includes('1122334'), 'Must include Git commit shortHash');
+    assert.ok(prompt.includes('src/auth/jwt.ts'), 'Must include Neo4j co-change companion file');
+    assert.ok(prompt.includes('## 1. OBSERVED FACTS'), 'Must include section 1');
+    assert.ok(prompt.includes('## 5. MINIMAL SUGGESTED FIX'), 'Must include section 5');
+    assert.ok(prompt.includes('[UNVERIFIED - SUGGESTED FIX]'), 'Must enforce unverified tag in instructions');
+  });
+
+  await test('Finale Phase 3: buildInvestigationPrompt bounds prompt length safely when exceeding token limit', () => {
+    const hugeCode = 'x = 1;\n'.repeat(20000);
+    const evidence: InvestigationEvidencePackage = {
+      request: {
+        filePath: 'src/big.ts',
+        fileName: 'big.ts',
+        startLine: 1,
+        endLine: 20000,
+        selectedCode: hugeCode,
+        repoRoot: '/workspace/app',
+        repoId: 'repo-abc',
+        repoName: 'my-app'
+      },
+      diagnostics: [],
+      gitHistory: {
+        status: 'ok',
+        selection: {
+          filePath: '/workspace/app/src/big.ts',
+          fileName: 'big.ts',
+          startLine: 1,
+          endLine: 20000,
+          selectedText: hugeCode
+        },
+        commits: []
+      },
+      coChangeEvidence: [],
+      neo4jStatus: 'disabled'
+    };
+
+    const prompt = buildInvestigationPrompt(evidence, { maxInputTokens: 500 });
+    assert.ok(prompt.length <= 2500, 'Prompt must be bounded to max characters corresponding to max tokens');
+    assert.ok(prompt.includes('Prompt bounded for safety'), 'Must include truncation disclosure');
+  });
+
+  await test('Finale Phase 3: parseInvestigationExplanation extracts all 7 sections and enforces isVerified: false on fix', () => {
+    const sampleAiOutput = `
+## 1. OBSERVED FACTS
+The target code calls \`validateToken(token)\` at line 43. Commit 1122334 changed the import from named to namespace import, leaving \`validateToken\` undefined. Active TypeScript diagnostic TS2722 confirms this.
+
+## 2. PLAUSIBLE ROOT-CAUSE HYPOTHESES
+- Namespace import change caused named \`validateToken\` reference to become undefined.
+- \`src/auth/jwt.ts\` was refactored without updating all call sites.
+
+## 3. RELATED FILES WORTH INSPECTING
+- \`src/auth/jwt.ts\`: Exports validateToken function under namespace jwt.
+- \`src/auth/session.ts\`: Caller file needing namespace adjustment.
+
+## 4. PROPOSED INVESTIGATION STEPS
+1. Check exports in \`src/auth/jwt.ts\`.
+2. Inspect runtime value of \`validateToken\` in debugger.
+
+## 5. MINIMAL SUGGESTED FIX
+\`\`\`typescript
+// Call via namespace import or restore named import
+jwt.validateToken(token);
+\`\`\`
+Update the call site to use the namespace \`jwt.validateToken(token)\`.
+
+## 6. RELEVANT TESTS TO RUN
+- Run \`npm test src/auth/session.test.ts\`.
+- Add test for null token error handling.
+
+## 7. UNCERTAINTIES & LIMITATIONS
+- Runtime token payload structure cannot be determined from static analysis alone.
+`;
+
+    const parsed = parseInvestigationExplanation(sampleAiOutput, 'copilot/claude-3.5-sonnet');
+    assert.ok(parsed.observedFacts.includes('calls `validateToken(token)`'));
+    assert.strictEqual(parsed.rootCauseHypotheses.length, 2);
+    assert.strictEqual(parsed.relatedFiles.length, 2);
+    assert.strictEqual(parsed.investigationSteps.length, 2);
+    assert.strictEqual(parsed.minimalSuggestedFix.isVerified, false, 'Suggested fix must always have isVerified: false');
+    assert.ok(parsed.minimalSuggestedFix.code.includes('jwt.validateToken(token)'));
+    assert.ok(parsed.minimalSuggestedFix.code.includes('[UNVERIFIED - SUGGESTED FIX]'), 'Must prepend unverified banner in code');
+    assert.strictEqual(parsed.relevantTests.length, 2);
+    assert.strictEqual(parsed.uncertainties.length, 1);
+    assert.strictEqual(parsed.model, 'copilot/claude-3.5-sonnet');
+  });
+
+  await test('Finale Phase 3: parseInvestigationExplanation applies safe defaults when sections or content are missing', () => {
+    const emptyResult = parseInvestigationExplanation('', 'copilot/gpt-4o');
+    assert.strictEqual(emptyResult.minimalSuggestedFix.isVerified, false);
+    assert.ok(emptyResult.observedFacts.includes('Unable to generate AI investigation analysis'));
+    assert.ok(emptyResult.investigationSteps.length > 0);
+    assert.ok(emptyResult.minimalSuggestedFix.code.includes('[UNVERIFIED - SUGGESTED FIX]'));
+
+    const partial = parseInvestigationExplanation('## 1. OBSERVED FACTS\nSome facts\n');
+    assert.strictEqual(partial.observedFacts, 'Some facts');
+    assert.ok(partial.rootCauseHypotheses.length > 0, 'Must apply fallback hypotheses');
+    assert.ok(partial.investigationSteps.length > 0, 'Must apply fallback steps');
+    assert.strictEqual(partial.minimalSuggestedFix.isVerified, false);
+  });
+
+  await test('Finale Phase 3: InvestigationExplainer blocks secret-containing diffs or user input with security redactor', () => {
+    const explainer = new InvestigationExplainer();
+    const evidence: InvestigationEvidencePackage = {
+      request: {
+        filePath: 'src/config.ts',
+        fileName: 'config.ts',
+        startLine: 1,
+        endLine: 2,
+        selectedCode: 'const awsKey = "AKIAIOSFODNN7EXAMPLE";', // AWS Access Key Secret
+        userErrorMessage: 'Error loading AWS key',
+        repoRoot: '/workspace/app',
+        repoId: 'repo-abc',
+        repoName: 'my-app'
+      },
+      diagnostics: [],
+      gitHistory: {
+        status: 'ok',
+        selection: {
+          filePath: '/workspace/app/src/config.ts',
+          fileName: 'config.ts',
+          startLine: 1,
+          endLine: 2,
+          selectedText: 'awsKey'
+        },
+        commits: []
+      },
+      coChangeEvidence: [],
+      neo4jStatus: 'disabled'
+    };
+
+    return explainer.explainBug(evidence).then((res) => {
+      assert.strictEqual(res.status, 'blocked_security');
+      assert.ok(res.error?.includes('Security scan blocked request'));
+    });
+  });
+
+  await test('Finale Phase 3: InvestigationExplainer handles missing language model gracefully (returns no_model)', () => {
+    const mockProvider: ILanguageModelProvider = {
+      isSupported: () => true,
+      selectChatModels: async () => [] // Zero models available
+    };
+
+    const explainer = new InvestigationExplainer(mockProvider);
+    const evidence: InvestigationEvidencePackage = {
+      request: {
+        filePath: 'src/utils.ts',
+        fileName: 'utils.ts',
+        startLine: 1,
+        endLine: 5,
+        selectedCode: 'export function add(a: number, b: number) { return a + b; }',
+        repoRoot: '/workspace/app',
+        repoId: 'repo-abc',
+        repoName: 'my-app'
+      },
+      diagnostics: [],
+      gitHistory: {
+        status: 'ok',
+        selection: {
+          filePath: '/workspace/app/src/utils.ts',
+          fileName: 'utils.ts',
+          startLine: 1,
+          endLine: 5,
+          selectedText: 'add'
+        },
+        commits: []
+      },
+      coChangeEvidence: [],
+      neo4jStatus: 'disabled'
+    };
+
+    return explainer.explainBug(evidence).then((res) => {
+      assert.strictEqual(res.status, 'no_model');
+      assert.ok(res.error?.includes('language models are available'));
+    });
+  });
+
+  await test('Finale Phase 3: InvestigationExplainer handles user cancellation cleanly', () => {
+    const mockProvider: ILanguageModelProvider = {
+      isSupported: () => true,
+      selectChatModels: async () => [
+        {
+          id: 'test-model',
+          name: 'Test Model',
+          vendor: 'test',
+          family: 'gpt',
+          version: '1.0',
+          maxInputTokens: 4000,
+          sendRequest: () => {
+            const err: any = new Error('User cancelled request');
+            err.name = 'VsCodeLmError';
+            err.diagnostics = {
+              provider: 'vscode',
+              status: 'cancelled',
+              category: 'CANCELLED',
+              durationMs: 10
+            };
+            throw err;
+          }
+        } as any
+      ]
+    };
+
+    const explainer = new InvestigationExplainer(mockProvider);
+    const evidence: InvestigationEvidencePackage = {
+      request: {
+        filePath: 'src/utils.ts',
+        fileName: 'utils.ts',
+        startLine: 1,
+        endLine: 5,
+        selectedCode: 'const x = 1;',
+        repoRoot: '/workspace/app',
+        repoId: 'repo-abc',
+        repoName: 'my-app'
+      },
+      diagnostics: [],
+      gitHistory: {
+        status: 'ok',
+        selection: {
+          filePath: '/workspace/app/src/utils.ts',
+          fileName: 'utils.ts',
+          startLine: 1,
+          endLine: 5,
+          selectedText: 'x'
+        },
+        commits: []
+      },
+      coChangeEvidence: [],
+      neo4jStatus: 'disabled'
+    };
+
+    return explainer.explainBug(evidence, { cancellationToken: { isCancellationRequested: true } }).then((res) => {
+      assert.strictEqual(res.status, 'cancelled');
+    });
+  });
+
+  await test('Finale Phase 3: WebviewView.renderInvestigationHtml renders metrics, 5 tabs, unverified fix banner, and copy button', () => {
+    const sampleResult: InvestigationResult = {
+      status: 'ok',
+      request: {
+        filePath: 'src/calc.ts',
+        fileName: 'calc.ts',
+        startLine: 10,
+        endLine: 12,
+        selectedCode: 'return a / b;',
+        userErrorMessage: 'Division by zero',
+        repoRoot: '/workspace/app',
+        repoId: 'repo-1',
+        repoName: 'calc-app'
+      },
+      evidence: {
+        request: {
+          filePath: 'src/calc.ts',
+          fileName: 'calc.ts',
+          startLine: 10,
+          endLine: 12,
+          selectedCode: 'return a / b;',
+          userErrorMessage: 'Division by zero',
+          repoRoot: '/workspace/app',
+          repoId: 'repo-1',
+          repoName: 'calc-app'
+        },
+        diagnostics: [
+          {
+            message: 'b might be zero',
+            severity: 'warning',
+            range: { startLine: 10, startCharacter: 10, endLine: 10, endCharacter: 11 },
+            overlapsSelection: true
+          }
+        ],
+        gitHistory: {
+          status: 'ok',
+          selection: {
+            filePath: '/workspace/app/src/calc.ts',
+            fileName: 'calc.ts',
+            startLine: 10,
+            endLine: 12,
+            selectedText: 'return a / b;'
+          },
+          commits: [
+            {
+              hash: 'aabbcc112233',
+              shortHash: 'aabbcc1',
+              authorName: 'Bob',
+              authorEmail: 'bob@example.com',
+              date: '2026-11-20',
+              subject: 'feat: add division operator',
+              body: '',
+              diff: '+return a / b;'
+            }
+          ]
+        },
+        coChangeEvidence: [
+          {
+            filePath: 'src/math.ts',
+            fileName: 'math.ts',
+            historicallyCoupledWith: ['src/calc.ts'],
+            sharedCommitCount: 3,
+            sampleCommitHashes: ['aabbcc1'],
+            sampleCommitSubjects: ['feat: add division operator'],
+            isCurrentlyChanged: false
+          }
+        ],
+        neo4jStatus: 'ok'
+      },
+      explanationStatus: 'ok',
+      explanation: {
+        observedFacts: 'Code performs division without checking if b is zero.',
+        rootCauseHypotheses: ['Zero divisor causes Infinity or runtime exception.'],
+        relatedFiles: [{ filePath: 'src/math.ts', reason: 'Shared math utility' }],
+        investigationSteps: ['Pass b=0 in test'],
+        minimalSuggestedFix: {
+          code: 'if (b === 0) throw new Error("Division by zero");\nreturn a / b;',
+          explanation: 'Add guard check before division.',
+          isVerified: false
+        },
+        relevantTests: ['testDivisionByZero'],
+        uncertainties: ['None'],
+        model: 'copilot/gpt-4o'
+      },
+      durationMs: 350
+    };
+
+    const html = WebviewView.renderInvestigationHtml(sampleResult);
+    assert.ok(html.includes('GitWhisper: Investigate Bug'), 'Must render title');
+    assert.ok(html.includes('Division by zero'), 'Must render reported error');
+    assert.ok(html.includes('[UNVERIFIED - SUGGESTED FIX]'), 'Must render prominent unverified warning');
+    assert.ok(html.includes('id="copy-btn"'), 'Must render copy fix button');
+    assert.ok(html.includes('data-tab="tab-analysis"'), 'Must render tab 1');
+    assert.ok(html.includes('data-tab="tab-plan"'), 'Must render tab 2');
+    assert.ok(html.includes('data-tab="tab-fix"'), 'Must render tab 3');
+    assert.ok(html.includes('data-tab="tab-evidence"'), 'Must render tab 4');
+    assert.ok(html.includes('data-tab="tab-diffs"'), 'Must render tab 5');
+    assert.ok(html.includes('src/math.ts'), 'Must render Neo4j co-change companion');
+  });
+
+  await test('Finale Phase 3: WebviewView.renderInvestigationHtml renders clean states for untracked and outside-repo files', () => {
+    const untrackedResult: InvestigationResult = {
+      status: 'untracked_file',
+      explanationStatus: 'disabled',
+      durationMs: 50
+    };
+    const untrackedHtml = WebviewView.renderInvestigationHtml(untrackedResult);
+    assert.ok(untrackedHtml.includes('Untracked File'), 'Must explain untracked file status');
+
+    const notRepoResult: InvestigationResult = {
+      status: 'not_a_repo',
+      explanationStatus: 'disabled',
+      durationMs: 30
+    };
+    const notRepoHtml = WebviewView.renderInvestigationHtml(notRepoResult);
+    assert.ok(notRepoHtml.includes('File Outside Git Repository'), 'Must explain non-repo status');
+  });
+
+  await test('Finale Phase 3: OutputView.showInvestigationSummary formats full investigation report without throwing', () => {
+    const result: InvestigationResult = {
+      status: 'ok',
+      request: {
+        filePath: 'src/service.ts',
+        fileName: 'service.ts',
+        startLine: 1,
+        endLine: 10,
+        selectedCode: 'console.log("hello");',
+        userErrorMessage: 'ReferenceError: log is not defined',
+        repoRoot: '/workspace/app',
+        repoId: 'repo-1',
+        repoName: 'app'
+      },
+      evidence: {
+        request: {
+          filePath: 'src/service.ts',
+          fileName: 'service.ts',
+          startLine: 1,
+          endLine: 10,
+          selectedCode: 'console.log("hello");',
+          repoRoot: '/workspace/app',
+          repoId: 'repo-1',
+          repoName: 'app'
+        },
+        diagnostics: [],
+        gitHistory: {
+          status: 'ok',
+          selection: {
+            filePath: '/workspace/app/src/service.ts',
+            fileName: 'service.ts',
+            startLine: 1,
+            endLine: 10,
+            selectedText: 'console.log'
+          },
+          commits: []
+        },
+        coChangeEvidence: [],
+        neo4jStatus: 'disabled'
+      },
+      explanationStatus: 'ok',
+      explanation: {
+        observedFacts: 'Facts',
+        rootCauseHypotheses: ['Hypothesis 1'],
+        relatedFiles: [],
+        investigationSteps: ['Step 1'],
+        minimalSuggestedFix: {
+          code: '// [UNVERIFIED - SUGGESTED FIX]\nconsole.log("fixed");',
+          explanation: 'Fix explanation',
+          isVerified: false
+        },
+        relevantTests: ['Test 1'],
+        uncertainties: ['Uncertainty 1'],
+        model: 'copilot/gpt-4o'
+      },
+      durationMs: 500
+    };
+
+    assert.doesNotThrow(() => {
+      OutputView.showInvestigationSummary(result);
+    });
+  });
+
+  // ====================================================
+  // 18. Finale: Unified Code Analysis Tests (originx.analyzeCode)
+  // ====================================================
+  await test('Finale Unified: gatherUnifiedEvidence orchestrates selection, diagnostics, working-tree modifications, Git blame, and Neo4j co-changes', async () => {
+    const req: UnifiedAnalysisRequest = {
+      filePath: 'src/extension.ts',
+      fileName: 'extension.ts',
+      startLine: 1,
+      endLine: 25,
+      selectedCode: 'import * as vscode from "vscode";',
+      repoRoot: process.cwd(),
+      repoId: 'test-repo-id',
+      repoName: 'originx-extension'
+    };
+
+    const bundle = await gatherUnifiedEvidence(req);
+    assert.strictEqual(bundle.request.fileName, 'extension.ts');
+    assert.ok(bundle.gitHistory !== undefined, 'Git history must be retrieved');
+    assert.ok(Array.isArray(bundle.diagnostics), 'Diagnostics array must be initialized');
+    assert.strictEqual(typeof bundle.isWorkingTreeModified, 'boolean');
+    assert.strictEqual(bundle.neo4jStatus, 'disabled', 'Neo4j must be disabled when no driver passed');
+  });
+
+  await test('Finale Unified: buildUnifiedAnalysisPrompt includes functionality, history, diagnostics, and co-changes', () => {
+    const bundle: UnifiedEvidenceBundle = {
+      request: {
+        filePath: 'src/core/auth.ts',
+        fileName: 'auth.ts',
+        startLine: 15,
+        endLine: 20,
+        selectedCode: 'function checkAuth(token: string) { return verify(token); }',
+        repoRoot: '/workspace/project',
+        repoId: 'repo-123',
+        repoName: 'auth-service'
+      },
+      diagnostics: [
+        {
+          message: 'verify does not exist on type Global',
+          severity: 'error',
+          range: { startLine: 15, startCharacter: 45, endLine: 15, endCharacter: 51 },
+          overlapsSelection: true
+        }
+      ],
+      gitHistory: {
+        status: 'ok',
+        selection: {
+          filePath: '/workspace/project/src/core/auth.ts',
+          fileName: 'auth.ts',
+          startLine: 15,
+          endLine: 20,
+          selectedText: 'verify(token);'
+        },
+        commits: [
+          {
+            hash: '445566778899aabbccddeeff445566778899aabb',
+            shortHash: '4455667',
+            authorName: 'Charlie',
+            authorEmail: 'charlie@example.com',
+            date: '2026-11-20',
+            subject: 'refactor: simplify token verification',
+            body: '',
+            diff: '-import { verify } from "jwt";\n+function checkAuth...'
+          }
+        ]
+      },
+      isWorkingTreeModified: true,
+      workingTreeDiff: '+// local uncommitted tweak',
+      neo4jCoChanges: [
+        {
+          filePath: 'src/core/jwt.ts',
+          fileName: 'jwt.ts',
+          historicallyCoupledWith: ['src/core/auth.ts'],
+          sharedCommitCount: 4,
+          sampleCommitHashes: ['4455667'],
+          sampleCommitSubjects: ['refactor: simplify token verification'],
+          isCurrentlyChanged: false
+        }
+      ],
+      neo4jStatus: 'ok'
+    };
+
+    const prompt = buildUnifiedAnalysisPrompt(bundle);
+    assert.ok(prompt.includes('GitWhisper by ORIGINX'), 'Must include GitWhisper branding');
+    assert.ok(prompt.includes('Understand the change. Trace the impact. Fix with context.'), 'Must include product direction');
+    assert.ok(prompt.includes('checkAuth(token: string)'), 'Must include code snippet');
+    assert.ok(prompt.includes('verify does not exist on type Global'), 'Must include active diagnostic');
+    assert.ok(prompt.includes('4455667'), 'Must include Git commit shortHash');
+    assert.ok(prompt.includes('src/core/jwt.ts'), 'Must include Neo4j co-change companion');
+    assert.ok(prompt.includes('## 1. WHAT THIS CODE DOES'), 'Must include section 1');
+    assert.ok(prompt.includes('## 5. SUGGESTIONS & FIXES'), 'Must include section 5');
+    assert.ok(prompt.includes('[UNVERIFIED - SUGGESTED FIX]'), 'Must require unverified fix badge');
+  });
+
+  await test('Finale Unified: buildUnifiedAnalysisPrompt explicitly states no bugs when diagnostics are empty without fabricating issues', () => {
+    const cleanBundle: UnifiedEvidenceBundle = {
+      request: {
+        filePath: 'src/math.ts',
+        fileName: 'math.ts',
+        startLine: 1,
+        endLine: 5,
+        selectedCode: 'export function add(a: number, b: number): number { return a + b; }',
+        repoRoot: '/workspace/project',
+        repoId: 'repo-123',
+        repoName: 'math-service'
+      },
+      diagnostics: [],
+      gitHistory: {
+        status: 'ok',
+        selection: {
+          filePath: '/workspace/project/src/math.ts',
+          fileName: 'math.ts',
+          startLine: 1,
+          endLine: 5,
+          selectedText: 'add'
+        },
+        commits: []
+      },
+      isWorkingTreeModified: false,
+      neo4jCoChanges: [],
+      neo4jStatus: 'disabled'
+    };
+
+    const prompt = buildUnifiedAnalysisPrompt(cleanBundle);
+    assert.ok(prompt.includes('No active compiler or linter diagnostics detected for this file.'));
+    assert.ok(prompt.includes('NO FABRICATED BUGS'), 'Must instruct model not to invent phantom bugs');
+  });
+
+  await test('Finale Unified: buildUnifiedAnalysisPrompt enforces bounds on maximum prompt character budget', () => {
+    const hugeCode = 'export const val = 42;\n'.repeat(10000);
+    const bundle: UnifiedEvidenceBundle = {
+      request: {
+        filePath: 'src/huge.ts',
+        fileName: 'huge.ts',
+        startLine: 1,
+        endLine: 10000,
+        selectedCode: hugeCode,
+        repoRoot: '/workspace/project',
+        repoId: 'repo-123',
+        repoName: 'huge-service'
+      },
+      diagnostics: [],
+      gitHistory: {
+        status: 'ok',
+        selection: {
+          filePath: '/workspace/project/src/huge.ts',
+          fileName: 'huge.ts',
+          startLine: 1,
+          endLine: 10000,
+          selectedText: hugeCode
+        },
+        commits: []
+      },
+      isWorkingTreeModified: false,
+      neo4jCoChanges: [],
+      neo4jStatus: 'disabled'
+    };
+
+    const prompt = buildUnifiedAnalysisPrompt(bundle, { maxInputTokens: 600 });
+    assert.ok(prompt.length <= 3000, 'Prompt must be strictly bounded');
+    assert.ok(prompt.includes('Prompt bounded for safety'), 'Must disclose bounding');
+  });
+
+  await test('Finale Unified: parseUnifiedExplanation extracts all 7 sections, detects clean diagnostic state, and guarantees isVerified: false', () => {
+    const aiText = `
+## 1. WHAT THIS CODE DOES
+Provides mathematical utility functions for arithmetic addition.
+
+## 2. HISTORICAL EVOLUTION & WHY IT CHANGED
+Originally committed in hash 4455667 to support basic calculations.
+
+## 3. DIAGNOSTICS & POTENTIAL ISSUES
+No compiler diagnostics or reported bugs detected for this selection. Code is clean.
+
+## 4. RELATED FILES & IMPACT ANALYSIS
+- \`src/calc.ts\`: Consumer of this math function.
+
+## 5. SUGGESTIONS & FIXES
+\`\`\`typescript
+// Add type validation
+export function add(a: number, b: number): number {
+  return a + b;
+}
+\`\`\`
+Clean defensive implementation.
+
+## 6. SUPPORTING EVIDENCE
+- Commit 4455667 (initial math utils)
+
+## 7. UNCERTAINTIES & LIMITATIONS
+- Static analysis only; assumes valid number types passed at runtime.
+`;
+
+    const parsed = parseUnifiedExplanation(aiText, 'copilot/claude-3.5-sonnet');
+    assert.ok(parsed.whatCodeDoes.includes('arithmetic addition'));
+    assert.ok(parsed.whyChangedHistorically.includes('4455667'));
+    assert.strictEqual(parsed.diagnosticsAndIssues.hasIssues, false, 'Must detect clean state when no bugs mentioned');
+    assert.strictEqual(parsed.relatedFilesAndImpact.length, 1);
+    assert.ok(parsed.suggestedImprovementsOrFixes !== undefined);
+    assert.strictEqual(parsed.suggestedImprovementsOrFixes?.isVerified, false, 'Suggested fix must always be isVerified: false');
+    assert.ok(parsed.suggestedImprovementsOrFixes?.code.includes('[UNVERIFIED - SUGGESTED FIX]'));
+    assert.strictEqual(parsed.supportingEvidence.length, 1);
+    assert.strictEqual(parsed.uncertaintiesAndLimitations.length, 1);
+    assert.strictEqual(parsed.model, 'copilot/claude-3.5-sonnet');
+  });
+
+  await test('Finale Unified: parseUnifiedExplanation handles missing sections with safe defaults', () => {
+    const emptyParsed = parseUnifiedExplanation('', 'copilot/gpt-4o');
+    assert.ok(emptyParsed.whatCodeDoes.includes('without AI synthesis'));
+    assert.strictEqual(emptyParsed.diagnosticsAndIssues.hasIssues, false);
+    assert.ok(emptyParsed.supportingEvidence.length > 0);
+
+    const partial = parseUnifiedExplanation('## 1. WHAT THIS CODE DOES\nCalculates sum\n');
+    assert.strictEqual(partial.whatCodeDoes, 'Calculates sum');
+    assert.ok(partial.whyChangedHistorically.length > 0);
+    assert.strictEqual(partial.diagnosticsAndIssues.hasIssues, false);
+  });
+
+  await test('Finale Unified: UnifiedExplainer blocks secret-containing diffs, code or query with security redactor', async () => {
+    const explainer = new UnifiedExplainer();
+    const bundle: UnifiedEvidenceBundle = {
+      request: {
+        filePath: 'src/secret.ts',
+        fileName: 'secret.ts',
+        startLine: 1,
+        endLine: 2,
+        selectedCode: 'const token = "ghp_111122223333444455556666777788889999";', // GitHub PAT
+        repoRoot: '/workspace/project',
+        repoId: 'repo-1',
+        repoName: 'project'
+      },
+      diagnostics: [],
+      gitHistory: {
+        status: 'ok',
+        selection: {
+          filePath: '/workspace/project/src/secret.ts',
+          fileName: 'secret.ts',
+          startLine: 1,
+          endLine: 2,
+          selectedText: 'token'
+        },
+        commits: []
+      },
+      isWorkingTreeModified: false,
+      neo4jCoChanges: [],
+      neo4jStatus: 'disabled'
+    };
+
+    const res = await explainer.analyzeCode(bundle);
+    assert.strictEqual(res.status, 'blocked_security');
+    assert.ok(res.error?.includes('Security scan blocked request'));
+  });
+
+  await test('Finale Unified: UnifiedExplainer handles missing language model gracefully (returns no_model with local fallback)', async () => {
+    const mockProvider: ILanguageModelProvider = {
+      isSupported: () => true,
+      selectChatModels: async () => []
+    };
+
+    const explainer = new UnifiedExplainer(mockProvider);
+    const bundle: UnifiedEvidenceBundle = {
+      request: {
+        filePath: 'src/main.ts',
+        fileName: 'main.ts',
+        startLine: 1,
+        endLine: 5,
+        selectedCode: 'console.log("hello");',
+        repoRoot: '/workspace/project',
+        repoId: 'repo-1',
+        repoName: 'project'
+      },
+      diagnostics: [],
+      gitHistory: {
+        status: 'ok',
+        selection: {
+          filePath: '/workspace/project/src/main.ts',
+          fileName: 'main.ts',
+          startLine: 1,
+          endLine: 5,
+          selectedText: 'console.log'
+        },
+        commits: []
+      },
+      isWorkingTreeModified: false,
+      neo4jCoChanges: [],
+      neo4jStatus: 'disabled'
+    };
+
+    const res = await explainer.analyzeCode(bundle);
+    assert.strictEqual(res.status, 'no_model');
+    assert.ok(res.error?.includes('language models are available'));
+  });
+
+  await test('Finale Unified: UnifiedExplainer handles user cancellation cleanly', async () => {
+    const mockProvider: ILanguageModelProvider = {
+      isSupported: () => true,
+      selectChatModels: async () => [
+        {
+          id: 'test-model',
+          name: 'Test Model',
+          vendor: 'test',
+          family: 'gpt',
+          version: '1.0',
+          maxInputTokens: 4000,
+          sendRequest: () => {
+            const err: any = new Error('Unified analysis cancelled by user');
+            err.name = 'VsCodeLmError';
+            err.diagnostics = {
+              provider: 'vscode',
+              status: 'cancelled',
+              category: 'CANCELLED',
+              durationMs: 5
+            };
+            throw err;
+          }
+        } as any
+      ]
+    };
+
+    const explainer = new UnifiedExplainer(mockProvider);
+    const bundle: UnifiedEvidenceBundle = {
+      request: {
+        filePath: 'src/app.ts',
+        fileName: 'app.ts',
+        startLine: 1,
+        endLine: 5,
+        selectedCode: 'const a = 1;',
+        repoRoot: '/workspace/project',
+        repoId: 'repo-1',
+        repoName: 'project'
+      },
+      diagnostics: [],
+      gitHistory: {
+        status: 'ok',
+        selection: {
+          filePath: '/workspace/project/src/app.ts',
+          fileName: 'app.ts',
+          startLine: 1,
+          endLine: 5,
+          selectedText: 'a'
+        },
+        commits: []
+      },
+      isWorkingTreeModified: false,
+      neo4jCoChanges: [],
+      neo4jStatus: 'disabled'
+    };
+
+    const res = await explainer.analyzeCode(bundle, { cancellationToken: { isCancellationRequested: true } });
+    assert.strictEqual(res.status, 'cancelled');
+  });
+
+  await test('Finale Unified: WebviewView.renderUnifiedAnalysisHtml renders 5 organized tabs, metrics strip, and copy button', () => {
+    const result: UnifiedAnalysisResult = {
+      status: 'ok',
+      request: {
+        filePath: 'src/auth.ts',
+        fileName: 'auth.ts',
+        startLine: 10,
+        endLine: 15,
+        selectedCode: 'function auth() { return true; }',
+        repoRoot: '/workspace/project',
+        repoId: 'repo-1',
+        repoName: 'project'
+      },
+      evidence: {
+        request: {
+          filePath: 'src/auth.ts',
+          fileName: 'auth.ts',
+          startLine: 10,
+          endLine: 15,
+          selectedCode: 'function auth() { return true; }',
+          repoRoot: '/workspace/project',
+          repoId: 'repo-1',
+          repoName: 'project'
+        },
+        diagnostics: [],
+        gitHistory: {
+          status: 'ok',
+          selection: {
+            filePath: '/workspace/project/src/auth.ts',
+            fileName: 'auth.ts',
+            startLine: 10,
+            endLine: 15,
+            selectedText: 'auth'
+          },
+          commits: [
+            {
+              hash: '1234567890abcdef1234567890abcdef12345678',
+              shortHash: '1234567',
+              authorName: 'Developer',
+              authorEmail: 'dev@example.com',
+              date: '2026-11-20',
+              subject: 'feat: add auth stub',
+              body: '',
+              diff: '+function auth() { return true; }'
+            }
+          ]
+        },
+        isWorkingTreeModified: true,
+        neo4jCoChanges: [
+          {
+            filePath: 'src/user.ts',
+            fileName: 'user.ts',
+            historicallyCoupledWith: ['src/auth.ts'],
+            sharedCommitCount: 3,
+            sampleCommitHashes: ['1234567'],
+            sampleCommitSubjects: ['feat: add auth stub'],
+            isCurrentlyChanged: false
+          }
+        ],
+        neo4jStatus: 'ok'
+      },
+      explanationStatus: 'ok',
+      explanation: {
+        whatCodeDoes: 'Authenticates users.',
+        whyChangedHistorically: 'Initial implementation in commit 1234567.',
+        diagnosticsAndIssues: {
+          hasIssues: false,
+          summary: 'No compiler diagnostics or reported bugs detected for this selection.',
+          details: []
+        },
+        relatedFilesAndImpact: [{ filePath: 'src/user.ts', reason: 'User session entity' }],
+        suggestedImprovementsOrFixes: {
+          code: 'function auth(user?: string) { return Boolean(user); }',
+          explanation: 'Add user check',
+          isVerified: false
+        },
+        supportingEvidence: ['Commit 1234567'],
+        uncertaintiesAndLimitations: ['Static check only.'],
+        model: 'copilot/gpt-4o'
+      },
+      durationMs: 400
+    };
+
+    const html = WebviewView.renderUnifiedAnalysisHtml(result);
+    assert.ok(html.includes('GitWhisper: Analyze Code'), 'Must render title');
+    assert.ok(html.includes('data-tab="tab-overview"'), 'Must render Tab 1');
+    assert.ok(html.includes('data-tab="tab-history"'), 'Must render Tab 2');
+    assert.ok(html.includes('data-tab="tab-bugs"'), 'Must render Tab 3');
+    assert.ok(html.includes('data-tab="tab-related"'), 'Must render Tab 4');
+    assert.ok(html.includes('data-tab="tab-fixes"'), 'Must render Tab 5');
+    assert.ok(html.includes('[UNVERIFIED - SUGGESTED FIX]'), 'Must render unverified advisory fix banner');
+    assert.ok(html.includes('id="unified-copy-btn"'), 'Must render copy fix button');
+    assert.ok(html.includes('src/user.ts'), 'Must render Neo4j co-change companion');
+  });
+
+  await test('Finale Unified: WebviewView.renderUnifiedAnalysisHtml displays clean state when zero diagnostics exist without inventing bugs', () => {
+    const cleanResult: UnifiedAnalysisResult = {
+      status: 'ok',
+      request: {
+        filePath: 'src/clean.ts',
+        fileName: 'clean.ts',
+        startLine: 1,
+        endLine: 5,
+        selectedCode: 'const a = 1;',
+        repoRoot: '/workspace/project',
+        repoId: 'repo-1',
+        repoName: 'project'
+      },
+      evidence: {
+        request: {
+          filePath: 'src/clean.ts',
+          fileName: 'clean.ts',
+          startLine: 1,
+          endLine: 5,
+          selectedCode: 'const a = 1;',
+          repoRoot: '/workspace/project',
+          repoId: 'repo-1',
+          repoName: 'project'
+        },
+        diagnostics: [],
+        gitHistory: {
+          status: 'ok',
+          selection: {
+            filePath: '/workspace/project/src/clean.ts',
+            fileName: 'clean.ts',
+            startLine: 1,
+            endLine: 5,
+            selectedText: 'a'
+          },
+          commits: []
+        },
+        isWorkingTreeModified: false,
+        neo4jCoChanges: [],
+        neo4jStatus: 'disabled'
+      },
+      explanationStatus: 'disabled',
+      durationMs: 100
+    };
+
+    const html = WebviewView.renderUnifiedAnalysisHtml(cleanResult);
+    assert.ok(html.includes('No compiler diagnostics or reported bugs detected for this selection.'));
+    assert.ok(html.includes('Clean State'));
+  });
+
+  await test('Finale Unified: OutputView.showUnifiedAnalysisSummary formats complete unified report without throwing', () => {
+    const sampleResult: UnifiedAnalysisResult = {
+      status: 'ok',
+      request: {
+        filePath: 'src/test.ts',
+        fileName: 'test.ts',
+        startLine: 1,
+        endLine: 10,
+        selectedCode: 'console.log("smoke test");',
+        repoRoot: '/workspace/project',
+        repoId: 'repo-1',
+        repoName: 'project'
+      },
+      evidence: {
+        request: {
+          filePath: 'src/test.ts',
+          fileName: 'test.ts',
+          startLine: 1,
+          endLine: 10,
+          selectedCode: 'console.log("smoke test");',
+          repoRoot: '/workspace/project',
+          repoId: 'repo-1',
+          repoName: 'project'
+        },
+        diagnostics: [],
+        gitHistory: {
+          status: 'ok',
+          selection: {
+            filePath: '/workspace/project/src/test.ts',
+            fileName: 'test.ts',
+            startLine: 1,
+            endLine: 10,
+            selectedText: 'console.log'
+          },
+          commits: []
+        },
+        isWorkingTreeModified: false,
+        neo4jCoChanges: [],
+        neo4jStatus: 'disabled'
+      },
+      explanationStatus: 'ok',
+      explanation: {
+        whatCodeDoes: 'Logs test output.',
+        whyChangedHistorically: 'Added in commit 001.',
+        diagnosticsAndIssues: {
+          hasIssues: false,
+          summary: 'Clean',
+          details: []
+        },
+        relatedFilesAndImpact: [],
+        supportingEvidence: ['Commit 001'],
+        uncertaintiesAndLimitations: ['None'],
+        model: 'copilot/gpt-4o'
+      },
+      durationMs: 250
+    };
+
+    assert.doesNotThrow(() => {
+      OutputView.showUnifiedAnalysisSummary(sampleResult);
+    });
+  });
+
+  await test('Finale Unified: Backward compatibility guarantees all previous commands remain registered and functional', () => {
+    const pkgPath = path.resolve(__dirname, '../../package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const commandIds = (pkg.contributes?.commands || []).map((c: any) => c.command);
+
+    // All original and finale commands must be registered
+    assert.ok(commandIds.includes('originx.analyzeCode'), 'originx.analyzeCode must be registered');
+    assert.ok(commandIds.includes('originx.whyWasThisChanged'), 'originx.whyWasThisChanged must remain registered');
+    assert.ok(commandIds.includes('originx.whyWereTheseChanged'), 'originx.whyWereTheseChanged must remain registered');
+    assert.ok(commandIds.includes('originx.reviewWorkingTree'), 'originx.reviewWorkingTree must remain registered');
+    assert.ok(commandIds.includes('originx.investigateBug'), 'originx.investigateBug must remain registered');
+    assert.ok(commandIds.includes('originx.commandCenter'), 'originx.commandCenter must remain registered');
   });
 
   console.log('\n====================================================');
