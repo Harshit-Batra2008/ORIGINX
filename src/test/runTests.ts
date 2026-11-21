@@ -919,42 +919,47 @@ None.
   // ====================================================
   // 11. Phase 3B: ORIGINX Command Center & Submenus Tests
   // ====================================================
-  await test('getCommandCenterItems generates GENERAL and DEVELOPER TOOLS categories with all action items including Neo4j actions', () => {
+  await test('getCommandCenterItems generates PRIMARY ACTIONS, FOCUSED HISTORY ANALYSIS, and DEVELOPER TOOLS & SETTINGS categories', () => {
     const items = getCommandCenterItems(false, true);
 
     // Separators
     const separators = items.filter((i) => i.kind === -1);
-    assert.strictEqual(separators.length, 2, 'Must have 2 category separators');
-    assert.strictEqual(separators[0].label, 'GENERAL');
-    assert.strictEqual(separators[1].label, 'DEVELOPER TOOLS');
+    assert.strictEqual(separators.length, 3, 'Must have 3 category separators');
+    assert.strictEqual(separators[0].label, 'PRIMARY ACTIONS');
+    assert.strictEqual(separators[1].label, 'FOCUSED HISTORY ANALYSIS');
+    assert.strictEqual(separators[2].label, 'DEVELOPER TOOLS & SETTINGS');
 
-    // General items
-    const generalItems = items.filter((i) => i.category === 'GENERAL');
-    assert.strictEqual(generalItems.length, 13, 'Must have 13 GENERAL items');
-    const generalIds = generalItems.map((i) => i.id);
-    assert.ok(generalIds.includes('analyze_code'));
-    assert.ok(generalIds.includes('explain'));
-    assert.ok(generalIds.includes('explain_multi'));
-    assert.ok(generalIds.includes('review_working_tree'));
-    assert.ok(generalIds.includes('investigate_bug'));
-    assert.ok(generalIds.includes('enable_auto'));
-    assert.ok(generalIds.includes('disable_auto'));
-    assert.ok(generalIds.includes('toggle_multi_confirm'));
-    assert.ok(generalIds.includes('list_models'));
-    assert.ok(generalIds.includes('import_graph'));
-    assert.ok(generalIds.includes('inspect_graph'));
-    assert.ok(generalIds.includes('retrieve_evidence'));
-    assert.ok(generalIds.includes('prune_graph'));
+    // Primary items (Main actions)
+    const primaryItems = items.filter((i) => i.category === 'PRIMARY');
+    assert.strictEqual(primaryItems.length, 3, 'Must have 3 PRIMARY items');
+    assert.strictEqual(primaryItems[0].id, 'analyze_code', 'Main action must be Analyze Code');
+    assert.strictEqual(primaryItems[1].id, 'review_working_tree', 'Second action must be Review Working Tree');
+    assert.strictEqual(primaryItems[2].id, 'investigate_bug', 'Third action must be Investigate Bug');
 
-    // Developer tools items
+    // History items
+    const historyItems = items.filter((i) => i.category === 'HISTORY');
+    assert.strictEqual(historyItems.length, 2, 'Must have 2 HISTORY items');
+    const historyIds = historyItems.map((i) => i.id);
+    assert.ok(historyIds.includes('explain'));
+    assert.ok(historyIds.includes('explain_multi'));
+
+    // Developer tools & settings items
     const devItems = items.filter((i) => i.category === 'DEVELOPER_TOOLS');
-    assert.strictEqual(devItems.length, 5, 'Must have 5 DEVELOPER TOOLS items');
+    assert.strictEqual(devItems.length, 13, 'Must have 13 DEVELOPER_TOOLS items');
     const devIds = devItems.map((i) => i.id);
+    assert.ok(devIds.includes('enable_auto'));
+    assert.ok(devIds.includes('disable_auto'));
+    assert.ok(devIds.includes('toggle_multi_confirm'));
+    assert.ok(devIds.includes('list_models'));
+    assert.ok(devIds.includes('import_graph'));
+    assert.ok(devIds.includes('inspect_graph'));
+    assert.ok(devIds.includes('retrieve_evidence'));
+    assert.ok(devIds.includes('prune_graph'));
+    assert.ok(devIds.includes('manage_neo4j_creds'));
     assert.ok(devIds.includes('inspect_payload'));
     assert.ok(devIds.includes('view_diagnostics'));
     assert.ok(devIds.includes('open_channel'));
     assert.ok(devIds.includes('show_env'));
-    assert.ok(devIds.includes('manage_neo4j_creds'));
   });
 
   await test('getCommandCenterItems dynamically updates active indicator based on isAutoAnalysis flag', () => {
@@ -1028,8 +1033,8 @@ None.
     assert.strictEqual(items[0].isBack, true, 'First item must be Back button');
     assert.strictEqual(items[1].kind, -1, 'Second item must be Separator');
 
-    const versionItem = items.find((i) => i.label.includes('ORIGINX Version'));
-    assert.ok(versionItem?.description?.includes('0.2.0'));
+    const versionItem = items.find((i) => i.label.includes('Version'));
+    assert.ok(versionItem?.description?.includes('0.3.0'));
 
     const hostItem = items.find((i) => i.label.includes('VS Code Host'));
     assert.strictEqual(hostItem?.description, '1.92.0');
@@ -7948,6 +7953,153 @@ Clean defensive implementation.
     assert.doesNotThrow(() => {
       OutputView.showUnifiedAnalysisSummary(sampleResult);
     });
+  });
+
+  await test('Finale Unified: WebviewView.renderUnifiedAnalysisHtml handles Neo4j file evidence with sparse/missing author/date properties without throwing and renders HTML', () => {
+    const neo4jResult: UnifiedAnalysisResult = {
+      status: 'ok',
+      request: {
+        filePath: 'package.json',
+        fileName: 'package.json',
+        startLine: 2,
+        endLine: 10,
+        selectedCode: '{\n  "name": "originx"\n}',
+        repoRoot: '/workspace/project',
+        repoId: 'repo-1',
+        repoName: 'project'
+      },
+      evidence: {
+        request: {
+          filePath: 'package.json',
+          fileName: 'package.json',
+          startLine: 2,
+          endLine: 10,
+          selectedCode: '{\n  "name": "originx"\n}',
+          repoRoot: '/workspace/project',
+          repoId: 'repo-1',
+          repoName: 'project'
+        },
+        diagnostics: [],
+        gitHistory: {
+          status: 'ok',
+          selection: {
+            filePath: '/workspace/project/package.json',
+            fileName: 'package.json',
+            startLine: 2,
+            endLine: 10,
+            selectedText: '{\n  "name": "originx"\n}'
+          },
+          commits: [
+            {
+              hash: 'abc1234567890123456789012345678901234567',
+              shortHash: 'abc1234',
+              subject: 'feat: add package.json',
+              body: '',
+              authorName: 'Developer',
+              authorEmail: 'dev@example.com',
+              date: '2026-11-20',
+              diff: 'diff --git a/package.json b/package.json'
+            }
+          ]
+        },
+        isWorkingTreeModified: false,
+        neo4jFileEvidence: [
+          {
+            commitHash: 'def567890123456789012345678901234567890',
+            shortHash: 'def5678',
+            subject: 'feat: neo4j graph commit',
+            body: '',
+            committedAt: '2026-11-20 10:00:00',
+            authorName: 'Neo4j Author',
+            authorEmail: 'neo4j@example.com',
+            filePath: 'package.json',
+            changeType: 'modified'
+          }
+        ],
+        neo4jCoChanges: [
+          {
+            filePath: 'src/extension.ts',
+            fileName: 'extension.ts',
+            historicallyCoupledWith: ['package.json'],
+            sharedCommitCount: 2,
+            sampleCommitHashes: ['def5678'],
+            sampleCommitSubjects: ['feat: neo4j graph commit'],
+            isCurrentlyChanged: false
+          }
+        ],
+        neo4jStatus: 'ok'
+      },
+      explanationStatus: 'ok',
+      explanation: {
+        whatCodeDoes: 'Package metadata configuration.',
+        whyChangedHistorically: 'Added in commit abc1234.',
+        diagnosticsAndIssues: {
+          hasIssues: false,
+          summary: 'Clean',
+          details: []
+        },
+        relatedFilesAndImpact: [{ filePath: 'src/extension.ts', reason: 'Imports dependencies' }],
+        suggestedImprovementsOrFixes: {
+          code: '// clean',
+          explanation: 'No patch required.',
+          isVerified: false
+        },
+        supportingEvidence: ['Commit abc1234'],
+        uncertaintiesAndLimitations: ['Static analysis only'],
+        model: 'copilot/gpt-4o'
+      },
+      durationMs: 400
+    };
+
+    let html = '';
+    assert.doesNotThrow(() => {
+      html = WebviewView.renderUnifiedAnalysisHtml(neo4jResult);
+    });
+
+    assert.ok(html.length > 500, 'HTML output must not be empty or blank');
+    assert.ok(html.includes('Neo4j Knowledge Graph History (1)'), 'Must render Neo4j history section');
+    assert.ok(html.includes('Neo4j Author'), 'Must render author from authorName');
+    assert.ok(html.includes('2026-11-20 10:00:00'), 'Must render date from committedAt');
+    assert.ok(html.includes('def5678'), 'Must render commit shortHash');
+    assert.ok(html.includes('Coupled Companion'), 'Must render coupled companion badge');
+  });
+
+  await test('Finale Unified: WebviewView.renderUnifiedAnalysisHtml never throws and remains non-blank with sparse/undefined inputs', () => {
+    const sparseResult: any = {
+      status: 'ok',
+      request: undefined,
+      evidence: {
+        diagnostics: [{ severity: undefined, message: undefined, range: undefined }],
+        gitHistory: { commits: [{ shortHash: undefined, subject: undefined, authorName: undefined, date: undefined }] },
+        neo4jFileEvidence: [{ shortHash: undefined, subject: undefined, changeType: undefined, author: undefined, date: undefined }],
+        neo4jCoChanges: [{ filePath: undefined, sampleCommitHashes: undefined, historicallyCoupledWith: undefined }],
+        neo4jStatus: undefined,
+        isWorkingTreeModified: undefined
+      },
+      explanationStatus: 'ok',
+      explanation: {
+        model: undefined,
+        whatCodeDoes: undefined,
+        whyChangedHistorically: undefined,
+        uncertaintiesAndLimitations: undefined,
+        suggestedImprovementsOrFixes: { code: undefined, explanation: undefined }
+      }
+    };
+
+    let html = '';
+    assert.doesNotThrow(() => {
+      html = WebviewView.renderUnifiedAnalysisHtml(sparseResult);
+    });
+    assert.ok(html.length > 1000, 'Sparse rendering must produce full non-empty HTML structure');
+    assert.ok(html.includes('<!DOCTYPE html>'), 'Must start with doctype');
+    assert.ok(html.includes('GitWhisper: Analyze Code'), 'Must render brand title');
+  });
+
+  await test('Finale Unified: WebviewView.renderErrorHtml generates well-formed fallback error page', () => {
+    const errorHtml = WebviewView.renderErrorHtml('Test Rendering Error', 'Detailed reason for error');
+    assert.ok(errorHtml.includes('Test Rendering Error'), 'Must render error title');
+    assert.ok(errorHtml.includes('Detailed reason for error'), 'Must render error detail');
+    assert.ok(errorHtml.includes('error-card'), 'Must contain error-card element');
   });
 
   await test('Finale Unified: Backward compatibility guarantees all previous commands remain registered and functional', () => {

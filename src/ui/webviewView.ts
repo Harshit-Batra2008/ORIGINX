@@ -366,7 +366,15 @@ export class WebviewView {
 
       if (WebviewView.currentPanel) {
         WebviewView.currentPanel.title = `GitWhisper: Review Working Tree (${result.totalChangedFiles} files)`;
-        WebviewView.currentPanel.webview.html = WebviewView.renderReviewerHtml(result);
+        try {
+          WebviewView.currentPanel.webview.html = WebviewView.renderReviewerHtml(result);
+        } catch (renderErr) {
+          console.error('[ORIGINX] Failed to render reviewer results HTML:', renderErr);
+          WebviewView.currentPanel.webview.html = WebviewView.renderErrorHtml(
+            'Failed to render reviewer results view',
+            renderErr instanceof Error ? renderErr.message : String(renderErr)
+          );
+        }
       }
     } catch (err) {
       console.error('[ORIGINX] Failed to display reviewer results webview:', err);
@@ -415,7 +423,15 @@ export class WebviewView {
 
       if (WebviewView.currentPanel) {
         WebviewView.currentPanel.title = panelTitle;
-        WebviewView.currentPanel.webview.html = WebviewView.renderInvestigationHtml(result);
+        try {
+          WebviewView.currentPanel.webview.html = WebviewView.renderInvestigationHtml(result);
+        } catch (renderErr) {
+          console.error('[ORIGINX] Failed to render bug investigation HTML:', renderErr);
+          WebviewView.currentPanel.webview.html = WebviewView.renderErrorHtml(
+            'Failed to render bug investigation view',
+            renderErr instanceof Error ? renderErr.message : String(renderErr)
+          );
+        }
       }
     } catch (err) {
       console.error('[ORIGINX] Failed to display bug investigation webview:', err);
@@ -464,7 +480,15 @@ export class WebviewView {
 
       if (WebviewView.currentPanel) {
         WebviewView.currentPanel.title = panelTitle;
-        WebviewView.currentPanel.webview.html = WebviewView.renderUnifiedAnalysisHtml(result);
+        try {
+          WebviewView.currentPanel.webview.html = WebviewView.renderUnifiedAnalysisHtml(result);
+        } catch (renderErr) {
+          console.error('[ORIGINX] Failed to render unified code analysis HTML:', renderErr);
+          WebviewView.currentPanel.webview.html = WebviewView.renderErrorHtml(
+            'Failed to render unified code analysis view',
+            renderErr instanceof Error ? renderErr.message : String(renderErr)
+          );
+        }
       }
     } catch (err) {
       console.error('[ORIGINX] Failed to display unified code analysis webview:', err);
@@ -3452,15 +3476,19 @@ export class WebviewView {
           : '<span class="badge badge-meta">File Level</span>';
         const sourceInfo = d.source ? `${this.escapeHtml(d.source)}${d.code ? `:${this.escapeHtml(String(d.code))}` : ''}` : '';
 
+        const rangeStr = d.range
+          ? `Lines ${d.range.startLine ?? 1}:${d.range.startCharacter ?? 0}–${d.range.endLine ?? 1}:${d.range.endCharacter ?? 0}`
+          : '';
+
         return `
           <div class="diag-card">
             <div class="diag-card-header">
-              <span class="badge ${badgeClass}">${d.severity.toUpperCase()}</span>
+              <span class="badge ${badgeClass}">${this.escapeHtml(d.severity ? d.severity.toUpperCase() : 'ISSUE')}</span>
               ${sourceInfo ? `<span class="badge badge-meta">${sourceInfo}</span>` : ''}
               ${overlapBadge}
-              <span class="meta-label" style="margin-left: auto;">Lines ${d.range.startLine}:${d.range.startCharacter}–${d.range.endLine}:${d.range.endCharacter}</span>
+              ${rangeStr ? `<span class="meta-label" style="margin-left: auto;">${this.escapeHtml(rangeStr)}</span>` : ''}
             </div>
-            <div class="diag-message">${this.escapeHtml(d.message)}</div>
+            <div class="diag-message">${this.escapeHtml(d.message || '')}</div>
           </div>`;
       }).join('')}</div>`;
     }
@@ -3468,22 +3496,26 @@ export class WebviewView {
     // Co-change companion cards
     let coChangeHtml = '<p class="subtle-text">No Neo4j co-change companion files found for this file (Neo4j may be offline or no shared commits recorded).</p>';
     if (coChanges.length > 0) {
-      coChangeHtml = `<div class="cochange-list">${coChanges.map((co) => {
+      coChangeHtml = `<div class="cochange-list">${coChanges.map((co: any) => {
         const changedTag = co.isCurrentlyChanged
           ? '<span class="badge badge-warning">Currently Modified</span>'
           : '<span class="badge badge-provider-vscode">Coupled Companion</span>';
-        const hashes = co.sampleCommitHashes.length > 0
-          ? `<div class="cochange-hashes"><span class="meta-label">Supporting Commits:</span> ${co.sampleCommitHashes.slice(0, 4).map((h) => `<span class="hash-pill">${this.escapeHtml(h)}</span>`).join(' ')}</div>`
+        const sampleHashes = Array.isArray(co.sampleCommitHashes) ? co.sampleCommitHashes : [];
+        const hashes = sampleHashes.length > 0
+          ? `<div class="cochange-hashes"><span class="meta-label">Supporting Commits:</span> ${sampleHashes.slice(0, 4).map((h: any) => `<span class="hash-pill">${this.escapeHtml(h)}</span>`).join(' ')}</div>`
           : '';
+        const coupledWith = Array.isArray(co.historicallyCoupledWith)
+          ? co.historicallyCoupledWith.join(', ')
+          : (co.historicallyCoupledWith || targetFileName);
 
         return `
           <div class="cochange-card">
             <div class="cochange-card-header">
-              <span class="cochange-path">${this.escapeHtml(co.filePath)}</span>
+              <span class="cochange-path">${this.escapeHtml(co.filePath || co.fileName || '')}</span>
               ${changedTag}
-              <span class="badge badge-meta" style="margin-left: auto;">${co.sharedCommitCount} shared commit(s)</span>
+              <span class="badge badge-meta" style="margin-left: auto;">${this.escapeHtml(String(co.sharedCommitCount ?? 1))} shared commit(s)</span>
             </div>
-            <div class="cochange-meta">Historically coupled with: <strong>${this.escapeHtml(co.historicallyCoupledWith.join(', '))}</strong></div>
+            <div class="cochange-meta">Historically coupled with: <strong>${this.escapeHtml(coupledWith)}</strong></div>
             ${hashes}
           </div>`;
       }).join('')}</div>`;
@@ -3983,13 +4015,15 @@ export class WebviewView {
 
   public static renderUnifiedAnalysisHtml(result: UnifiedAnalysisResult): string {
     const logoHtml = this.getOriginxLogoHtml(26);
-    const req = result.request;
-    const exp = result.explanation;
-    const diagList = result.evidence?.diagnostics || [];
-    const commits = result.evidence?.gitHistory?.commits || [];
-    const coChanges = result.evidence?.neo4jCoChanges || [];
-    const neo4jCommits = result.evidence?.neo4jFileEvidence || [];
-    const isWorkingTreeMod = result.evidence?.isWorkingTreeModified || false;
+    const req = result?.request;
+    const exp = result?.explanation;
+    const diagList = result?.evidence?.diagnostics || [];
+    const commits = result?.evidence?.gitHistory?.commits || [];
+    const coChanges = result?.evidence?.neo4jCoChanges || [];
+    const neo4jCommits = result?.evidence?.neo4jFileEvidence || [];
+    const isWorkingTreeMod = result?.evidence?.isWorkingTreeModified || false;
+
+    const nonce = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
     let providerLabel = 'Local Git Only';
     let providerBadgeClass = 'badge-neutral';
@@ -3997,28 +4031,29 @@ export class WebviewView {
     if (exp) {
       providerLabel = `VS Code LM (${this.escapeHtml(exp.model || 'copilot')})`;
       providerBadgeClass = 'badge-provider-vscode';
-    } else if (result.explanationStatus === 'disabled') {
+    } else if (result?.explanationStatus === 'disabled') {
       providerLabel = 'AI Analysis Disabled (Default)';
       providerBadgeClass = 'badge-neutral';
-    } else if (result.explanationStatus === 'no_model') {
+    } else if (result?.explanationStatus === 'no_model') {
       providerLabel = 'VS Code LM Unavailable';
       providerBadgeClass = 'badge-warning';
-    } else if (result.explanationStatus === 'blocked_security') {
+    } else if (result?.explanationStatus === 'blocked_security') {
       providerLabel = 'Security Blocked';
       providerBadgeClass = 'badge-error';
-    } else if (result.explanationStatus === 'failed') {
+    } else if (result?.explanationStatus === 'failed') {
       providerLabel = 'AI Failed (Local Mode)';
       providerBadgeClass = 'badge-warning';
     }
 
-    const durationBadge = result.durationMs ? `${(result.durationMs / 1000).toFixed(1)}s` : '';
+    const durationBadge = result?.durationMs ? `${(result.durationMs / 1000).toFixed(1)}s` : '';
 
-    if (result.status === 'not_a_repo') {
+    if (result?.status === 'not_a_repo') {
       return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}' 'unsafe-inline'; img-src data: https:;">
   <title>GitWhisper: Analyze Code</title>
   <style>
     body { background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); font-family: var(--vscode-font-family); padding: 20px; }
@@ -4034,12 +4069,13 @@ export class WebviewView {
 </html>`;
     }
 
-    if (result.status === 'untracked_file') {
+    if (result?.status === 'untracked_file') {
       return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}' 'unsafe-inline'; img-src data: https:;">
   <title>GitWhisper: Analyze Code</title>
   <style>
     body { background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); font-family: var(--vscode-font-family); padding: 20px; }
@@ -4055,8 +4091,8 @@ export class WebviewView {
 </html>`;
     }
 
-    const errCount = diagList.filter((d: any) => d.severity === 'error').length;
-    const warnCount = diagList.filter((d: any) => d.severity === 'warning').length;
+    const errCount = Array.isArray(diagList) ? diagList.filter((d: any) => d && d.severity === 'error').length : 0;
+    const warnCount = Array.isArray(diagList) ? diagList.filter((d: any) => d && d.severity === 'warning').length : 0;
     const targetFileName = req?.fileName || 'Selected Code';
     const targetFilePath = req?.filePath || '';
     const startLine = req?.startLine || 1;
@@ -4071,50 +4107,59 @@ export class WebviewView {
         <div class="subtle-text" style="margin-top: 4px;">Language server reports zero errors, warnings, or active diagnostic issues on the selected lines.</div>
       </div>`;
 
-    if (diagList.length > 0) {
+    if (Array.isArray(diagList) && diagList.length > 0) {
       diagnosticsHtml = `<div class="diag-list">${diagList.map((d: any) => {
         let badgeClass = 'badge-neutral';
-        if (d.severity === 'error') badgeClass = 'badge-error';
-        else if (d.severity === 'warning') badgeClass = 'badge-warning';
-        else if (d.severity === 'information') badgeClass = 'badge-provider-vscode';
+        const severity = d?.severity || 'warning';
+        if (severity === 'error') badgeClass = 'badge-error';
+        else if (severity === 'warning') badgeClass = 'badge-warning';
+        else if (severity === 'information') badgeClass = 'badge-provider-vscode';
 
-        const overlapBadge = d.overlapsSelection
+        const overlapBadge = d?.overlapsSelection
           ? '<span class="badge badge-success">Overlaps Selection</span>'
           : '<span class="badge badge-meta">File Level</span>';
-        const sourceInfo = d.source ? `${this.escapeHtml(d.source)}${d.code ? `:${this.escapeHtml(String(d.code))}` : ''}` : '';
+        const sourceInfo = d?.source ? `${this.escapeHtml(d.source)}${d?.code ? `:${this.escapeHtml(String(d.code))}` : ''}` : '';
+        const rangeStr = d?.range
+          ? `Lines ${d.range.startLine ?? 1}:${d.range.startCharacter ?? 0}–${d.range.endLine ?? 1}:${d.range.endCharacter ?? 0}`
+          : '';
 
         return `
           <div class="diag-card">
             <div class="diag-card-header">
-              <span class="badge ${badgeClass}">${d.severity.toUpperCase()}</span>
+              <span class="badge ${badgeClass}">${this.escapeHtml(String(severity).toUpperCase())}</span>
               ${sourceInfo ? `<span class="badge badge-meta">${sourceInfo}</span>` : ''}
               ${overlapBadge}
-              <span class="meta-label" style="margin-left: auto;">Lines ${d.range.startLine}:${d.range.startCharacter}–${d.range.endLine}:${d.range.endCharacter}</span>
+              ${rangeStr ? `<span class="meta-label" style="margin-left: auto;">${this.escapeHtml(rangeStr)}</span>` : ''}
             </div>
-            <div class="diag-message">${this.escapeHtml(d.message)}</div>
+            <div class="diag-message">${this.escapeHtml(d?.message || '')}</div>
           </div>`;
       }).join('')}</div>`;
     }
 
     // Co-change companion cards
     let coChangeHtml = '<p class="subtle-text">No Neo4j co-change companion files found for this file (Neo4j may be offline or no shared commits recorded).</p>';
-    if (coChanges.length > 0) {
+    if (Array.isArray(coChanges) && coChanges.length > 0) {
       coChangeHtml = `<div class="cochange-list">${coChanges.map((co: any) => {
-        const changedTag = co.isCurrentlyChanged
+        const changedTag = co?.isCurrentlyChanged
           ? '<span class="badge badge-warning">Currently Modified</span>'
           : '<span class="badge badge-provider-vscode">Coupled Companion</span>';
-        const hashes = co.sampleCommitHashes.length > 0
-          ? `<div class="cochange-hashes"><span class="meta-label">Supporting Commits:</span> ${co.sampleCommitHashes.slice(0, 4).map((h: any) => `<span class="hash-pill">${this.escapeHtml(h)}</span>`).join(' ')}</div>`
+        const sampleHashes = Array.isArray(co?.sampleCommitHashes) ? co.sampleCommitHashes : [];
+        const hashes = sampleHashes.length > 0
+          ? `<div class="cochange-hashes"><span class="meta-label">Supporting Commits:</span> ${sampleHashes.slice(0, 4).map((h: any) => `<span class="hash-pill">${this.escapeHtml(h)}</span>`).join(' ')}</div>`
           : '';
+        const coupledWith = Array.isArray(co?.historicallyCoupledWith)
+          ? co.historicallyCoupledWith.join(', ')
+          : (co?.historicallyCoupledWith || targetFileName);
+        const count = co?.sharedCommitCount ?? 1;
 
         return `
           <div class="cochange-card">
             <div class="cochange-card-header">
-              <span class="cochange-path">${this.escapeHtml(co.filePath)}</span>
+              <span class="cochange-path">${this.escapeHtml(co?.filePath || co?.fileName || '')}</span>
               ${changedTag}
-              <span class="badge badge-meta" style="margin-left: auto;">${co.sharedCommitCount} shared commit(s)</span>
+              <span class="badge badge-meta" style="margin-left: auto;">${this.escapeHtml(String(count))} shared commit(s)</span>
             </div>
-            <div class="cochange-meta">Historically coupled with: <strong>${this.escapeHtml(co.historicallyCoupledWith.join(', '))}</strong></div>
+            <div class="cochange-meta">Historically coupled with: <strong>${this.escapeHtml(coupledWith)}</strong></div>
             ${hashes}
           </div>`;
       }).join('')}</div>`;
@@ -4122,34 +4167,41 @@ export class WebviewView {
 
     // Git commits list
     let commitsHtml = '<p class="subtle-text">No Git commits found for the selected lines.</p>';
-    if (commits.length > 0) {
+    if (Array.isArray(commits) && commits.length > 0) {
       commitsHtml = `<div class="commit-list">${commits.map((c: any) => {
+        const shortHash = c?.shortHash || (c?.hash ? String(c.hash).substring(0, 7) : 'commit');
+        const subject = c?.subject || '(no subject)';
+        const authorName = c?.authorName || c?.author || 'Unknown';
+        const dateStr = c?.date || c?.committedAt || 'Unknown';
         return `
           <div class="commit-card">
             <div class="commit-card-header">
-              <span class="hash-pill">${this.escapeHtml(c.shortHash)}</span>
-              <span class="commit-subject">${this.escapeHtml(c.subject)}</span>
+              <span class="hash-pill">${this.escapeHtml(shortHash)}</span>
+              <span class="commit-subject">${this.escapeHtml(subject)}</span>
             </div>
             <div class="commit-meta">
-              <span>Author: <strong>${this.escapeHtml(c.authorName)}</strong> &lt;${this.escapeHtml(c.authorEmail)}&gt;</span>
-              <span>Date: ${this.escapeHtml(c.date)}</span>
+              <span>Author: <strong>${this.escapeHtml(authorName)}</strong>${c?.authorEmail ? ` &lt;${this.escapeHtml(c.authorEmail)}&gt;` : ''}</span>
+              <span>Date: ${this.escapeHtml(dateStr)}</span>
             </div>
-            ${c.body ? `<div class="commit-body">${this.escapeHtml(c.body)}</div>` : ''}
+            ${c?.body ? `<div class="commit-body">${this.escapeHtml(c.body)}</div>` : ''}
           </div>`;
       }).join('')}</div>`;
     }
 
     // Diffs html
     let diffsHtml = '<p class="subtle-text">No diff hunks available for the selected lines.</p>';
-    if (commits.some((c: any) => c.diff)) {
+    if (Array.isArray(commits) && commits.some((c: any) => c && c.diff)) {
       diffsHtml = commits
-        .filter((c: any) => c.diff)
+        .filter((c: any) => c && c.diff)
         .map((c: any, idx: number) => {
+          const shortHash = c?.shortHash || (c?.hash ? String(c.hash).substring(0, 7) : 'commit');
+          const subject = c?.subject || '(no subject)';
+          const dateStr = c?.date || c?.committedAt || '';
           return `
             <details class="diff-accordion" ${idx === 0 ? 'open' : ''}>
               <summary class="diff-summary">
-                <span><strong>${this.escapeHtml(c.shortHash)}</strong>: ${this.escapeHtml(c.subject)}</span>
-                <span class="badge badge-meta">${this.escapeHtml(c.date)}</span>
+                <span><strong>${this.escapeHtml(shortHash)}</strong>: ${this.escapeHtml(subject)}</span>
+                ${dateStr ? `<span class="badge badge-meta">${this.escapeHtml(dateStr)}</span>` : ''}
               </summary>
               <div class="diff-content">
                 <pre class="diff-pre"><code>${this.escapeHtml(c.diff || '(No diff content)')}</code></pre>
@@ -4169,6 +4221,8 @@ export class WebviewView {
 
     if (exp?.suggestedImprovementsOrFixes) {
       const fix = exp.suggestedImprovementsOrFixes;
+      const fixCode = fix?.code || '';
+      const fixExpl = fix?.explanation || '';
       fixSectionHtml = `
         <div class="unverified-banner">
           <span class="badge badge-error">[UNVERIFIED - SUGGESTED FIX]</span>
@@ -4179,11 +4233,11 @@ export class WebviewView {
             <span>Suggested Patch</span>
             <button class="copy-btn" id="unified-copy-btn">Copy Fix</button>
           </div>
-          <pre class="code-pre"><code id="unified-fix-code">${this.escapeHtml(fix.code)}</code></pre>
+          <pre class="code-pre"><code id="unified-fix-code">${this.escapeHtml(fixCode)}</code></pre>
         </div>
         <div class="section-card">
           <div class="section-title">Explanation &amp; Rationale</div>
-          <div class="fix-explanation">${this.escapeHtml(fix.explanation)}</div>
+          <div class="fix-explanation">${this.escapeHtml(fixExpl)}</div>
         </div>`;
     }
 
@@ -4192,7 +4246,7 @@ export class WebviewView {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: https:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}' 'unsafe-inline'; img-src data: https:;">
   <title>GitWhisper: Analyze Code</title>
   <style>
     :root {
@@ -4435,7 +4489,7 @@ export class WebviewView {
       <span class="badge ${isWorkingTreeMod ? 'badge-warning' : 'badge-success'}">${isWorkingTreeMod ? 'Modified Locally' : 'Working Tree Clean'}</span>
       ${diagList.length > 0 ? `<span class="badge ${errCount > 0 ? 'badge-error' : 'badge-warning'}">${diagList.length} Diagnostic(s)</span>` : '<span class="badge badge-success">0 Diagnostics</span>'}
       <span class="badge badge-meta">${commits.length} Commit(s)</span>
-      <span class="badge badge-meta">Neo4j: ${result.evidence?.neo4jStatus || 'disabled'}</span>
+      <span class="badge badge-meta">Neo4j: ${this.escapeHtml(result?.evidence?.neo4jStatus || 'disabled')}</span>
       ${durationBadge ? `<span class="badge badge-meta">${durationBadge}</span>` : ''}
     </div>
   </div>
@@ -4487,7 +4541,9 @@ export class WebviewView {
     <div class="section-card">
       <div class="section-title">Uncertainties &amp; Limitations</div>
       <ul class="bullet-list">
-        ${(exp?.uncertaintiesAndLimitations || ['Static analysis only. Verify with runtime execution.']).map((u: any) => `
+        ${(Array.isArray(exp?.uncertaintiesAndLimitations) && exp.uncertaintiesAndLimitations.length > 0
+          ? exp.uncertaintiesAndLimitations
+          : ['Static analysis only. Verify with runtime execution.']).map((u: any) => `
           <li class="bullet-item">
             <span class="bullet-icon">&#x25CB;</span>
             <span style="color: var(--subtle);">${this.escapeHtml(u)}</span>
@@ -4508,22 +4564,29 @@ export class WebviewView {
       ${diffsHtml}
     </div>
 
-    ${neo4jCommits.length > 0 ? `
+    ${Array.isArray(neo4jCommits) && neo4jCommits.length > 0 ? `
       <div class="section-card">
         <div class="section-title">Neo4j Knowledge Graph History (${neo4jCommits.length})</div>
         <div class="commit-list">
-          ${neo4jCommits.map((c: any) => `
+          ${neo4jCommits.map((c: any) => {
+            const shortHash = c?.shortHash || (c?.commitHash ? String(c.commitHash).substring(0, 7) : 'commit');
+            const subject = c?.subject || '(no subject)';
+            const changeType = c?.changeType || 'MODIFIED';
+            const author = c?.authorName || c?.author || 'Unknown';
+            const dateStr = c?.committedAt || c?.date || 'Unknown';
+            return `
             <div class="commit-card">
               <div class="commit-card-header">
-                <span class="hash-pill">${this.escapeHtml(c.shortHash)}</span>
-                <span class="commit-subject">${this.escapeHtml(c.subject)}</span>
-                <span class="badge badge-meta" style="margin-left: auto;">${this.escapeHtml(c.changeType)}</span>
+                <span class="hash-pill">${this.escapeHtml(shortHash)}</span>
+                <span class="commit-subject">${this.escapeHtml(subject)}</span>
+                <span class="badge badge-meta" style="margin-left: auto;">${this.escapeHtml(changeType)}</span>
               </div>
               <div class="commit-meta">
-                <span>Author: <strong>${this.escapeHtml(c.author)}</strong></span>
-                <span>Date: ${this.escapeHtml(c.date)}</span>
+                <span>Author: <strong>${this.escapeHtml(author)}</strong></span>
+                <span>Date: ${this.escapeHtml(dateStr)}</span>
               </div>
-            </div>`).join('')}
+            </div>`;
+          }).join('')}
         </div>
       </div>` : ''}
   </div>
@@ -4535,7 +4598,7 @@ export class WebviewView {
       ${diagnosticsHtml}
     </div>
 
-    ${exp?.diagnosticsAndIssues?.details && exp.diagnosticsAndIssues.details.length > 0 ? `
+    ${exp?.diagnosticsAndIssues?.details && Array.isArray(exp.diagnosticsAndIssues.details) && exp.diagnosticsAndIssues.details.length > 0 ? `
       <div class="section-card">
         <div class="section-title">Potential Issues &amp; Inconsistencies</div>
         <ul class="bullet-list">
@@ -4555,14 +4618,14 @@ export class WebviewView {
       ${coChangeHtml}
     </div>
 
-    ${exp?.relatedFilesAndImpact && exp.relatedFilesAndImpact.length > 0 ? `
+    ${exp?.relatedFilesAndImpact && Array.isArray(exp.relatedFilesAndImpact) && exp.relatedFilesAndImpact.length > 0 ? `
       <div class="section-card">
         <div class="section-title">Blast Radius &amp; Impact Analysis</div>
         <ul class="bullet-list">
           ${exp.relatedFilesAndImpact.map((rf: any) => `
             <li class="bullet-item">
               <span class="bullet-icon">&#x2192;</span>
-              <span><strong>${this.escapeHtml(rf.filePath)}</strong>: ${this.escapeHtml(rf.reason)}</span>
+              <span><strong>${this.escapeHtml(rf?.filePath || '')}</strong>: ${this.escapeHtml(rf?.reason || '')}</span>
             </li>`).join('')}
         </ul>
       </div>` : ''}
@@ -4573,7 +4636,7 @@ export class WebviewView {
     ${fixSectionHtml}
   </div>
 
-  <script>
+  <script nonce="${nonce}">
     (function() {
       const tabs = document.querySelectorAll('.tab-button');
       const panels = document.querySelectorAll('.tab-panel');
@@ -4610,8 +4673,56 @@ export class WebviewView {
 </html>`;
   }
 
-  private static escapeHtml(text: string): string {
-    return text
+  public static renderErrorHtml(title: string, details: string): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${this.escapeHtml(title)}</title>
+  <style>
+    body {
+      background: var(--vscode-editor-background);
+      color: var(--vscode-editor-foreground);
+      font-family: var(--vscode-font-family);
+      padding: 24px;
+    }
+    .error-card {
+      background: var(--vscode-inputValidation-errorBackground, rgba(248,81,73,0.1));
+      border: 1px solid var(--vscode-inputValidation-errorBorder, rgba(248,81,73,0.4));
+      border-radius: 8px;
+      padding: 20px;
+    }
+    h3 { margin-bottom: 8px; color: #f85149; }
+    p { margin-bottom: 12px; font-size: 13px; }
+    pre {
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 12px;
+      padding: 10px;
+      background: rgba(0,0,0,0.25);
+      border-radius: 4px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      opacity: 0.9;
+    }
+  </style>
+</head>
+<body>
+  <div class="error-card">
+    <h3>${this.escapeHtml(title)}</h3>
+    <p>An unexpected error occurred while preparing this view. The analysis completed, but the visual template could not render.</p>
+    <pre>${this.escapeHtml(details)}</pre>
+  </div>
+</body>
+</html>`;
+  }
+
+  private static escapeHtml(text: any): string {
+    if (text === null || text === undefined) {
+      return '';
+    }
+    const str = typeof text === 'string' ? text : String(text);
+    return str
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')

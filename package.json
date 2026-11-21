@@ -2,7 +2,7 @@
   "name": "originx-extension",
   "displayName": "GitWhisper by ORIGINX",
   "description": "Understand why code changed with GitWhisper by ORIGINX — evidence-grounded code history explanations combining local Git line evolution, Neo4j knowledge graph provenance, and GitHub Copilot.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "originx",
   "license": "MIT",
   "icon": "assets/originx-icon.png",
@@ -82,10 +82,6 @@
         "title": "GitWhisper: Analyze Code"
       },
       {
-        "command": "originx.whyWasThisChanged",
-        "title": "ORIGINX: Why Was This Changed?"
-      },
-      {
         "command": "originx.reviewWorkingTree",
         "title": "GitWhisper: Review Working Tree Changes"
       },
@@ -94,12 +90,16 @@
         "title": "GitWhisper: Investigate Bug"
       },
       {
-        "command": "originx.whyWereTheseChanged",
-        "title": "ORIGINX: Why Were These Changed?"
+        "command": "originx.commandCenter",
+        "title": "GitWhisper: Command Center"
       },
       {
-        "command": "originx.commandCenter",
-        "title": "ORIGINX: Command Center"
+        "command": "originx.whyWasThisChanged",
+        "title": "ORIGINX: Why Was This Changed?"
+      },
+      {
+        "command": "originx.whyWereTheseChanged",
+        "title": "ORIGINX: Why Were These Changed?"
       },
       {
         "command": "originx.enableAutomaticAnalysis",
@@ -146,7 +146,7 @@
           "group": "originx_group@0"
         },
         {
-          "command": "originx.whyWasThisChanged",
+          "command": "originx.reviewWorkingTree",
           "when": "editorTextFocus",
           "group": "originx_group@1"
         },
@@ -154,6 +154,11 @@
           "command": "originx.investigateBug",
           "when": "editorTextFocus",
           "group": "originx_group@2"
+        },
+        {
+          "command": "originx.whyWasThisChanged",
+          "when": "editorTextFocus",
+          "group": "originx_group@3"
         }
       ],
       "explorer/context": [

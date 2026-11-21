@@ -14,7 +14,7 @@ const SEPARATOR_KIND = -1; // Corresponds to vscode.QuickPickItemKind.Separator
 
 export interface CommandCenterEntry {
   id?: string;
-  category?: 'GENERAL' | 'DEVELOPER_TOOLS';
+  category?: 'PRIMARY' | 'HISTORY' | 'DEVELOPER_TOOLS' | 'GENERAL';
   label: string;
   description?: string;
   detail?: string;
@@ -61,131 +61,107 @@ export function getCommandCenterItems(
 ): CommandCenterEntry[] {
   return [
     {
-      label: 'GENERAL',
+      label: 'PRIMARY ACTIONS',
       kind: SEPARATOR_KIND
     },
     {
       id: 'analyze_code',
-      category: 'GENERAL',
-      label: '$(sparkle) GitWhisper: Analyze Code',
-      description: 'Unified analysis: functionality, history, diagnostics & blast radius',
-      detail: 'Primary command: Ctrl+O then Ctrl+X (editor selection) or Command Center'
-    },
-    {
-      id: 'explain',
-      category: 'GENERAL',
-      label: '$(search) Explain Selected Code',
-      description: 'Analyze why selected code changed using Git history & Copilot AI',
-      detail: 'Shortcut: Ctrl+Alt+H (Cmd+Alt+H on macOS) or Right-click -> "Why Was This Changed?"'
-    },
-    {
-      id: 'explain_multi',
-      category: 'GENERAL',
-      label: '$(files) Explain Multiple Selected Files',
-      description: 'Analyze changes across multiple files selected in the Explorer',
-      detail: 'Context shortcut: Right-click files in Explorer -> "Why Were These Changed?"'
+      category: 'PRIMARY',
+      label: '$(sparkle) GitWhisper: Analyze Code (Main Action)',
+      description: 'Unified code analysis, bug diagnostics, Git & Neo4j impact',
+      detail: 'Shortcut: Ctrl+O then Ctrl+X (editor selection)'
     },
     {
       id: 'review_working_tree',
-      category: 'GENERAL',
-      label: '$(eye) Review Working Tree Changes (Code Reviewer)',
-      description: 'Analyze staged/unstaged changes with Neo4j co-change impact',
-      detail: 'Runs GitWhisper reviewer journey with blast radius analysis'
+      category: 'PRIMARY',
+      label: '$(git-pull-request) GitWhisper: Review Working Tree Changes',
+      description: 'Inspect staged & unstaged modifications with co-change evidence',
+      detail: 'Analyzes working tree modifications and blast radius'
     },
     {
       id: 'investigate_bug',
-      category: 'GENERAL',
-      label: '$(bug) Investigate Bug (Evidence-Aware Causal Analysis)',
-      description: 'Trace bug cause using diagnostics, Git line history, and Neo4j blast radius',
-      detail: 'Runs GitWhisper bug investigation journey with minimal suggested fix'
+      category: 'PRIMARY',
+      label: '$(bug) GitWhisper: Investigate Bug',
+      description: 'Diagnose selected code and optionally use a reported error',
+      detail: 'Finds causal commits with unverified suggested fix'
+    },
+    {
+      label: 'FOCUSED HISTORY ANALYSIS',
+      kind: SEPARATOR_KIND
+    },
+    {
+      id: 'explain',
+      category: 'HISTORY',
+      label: '$(history) Why Was This Changed? (Single Selection)',
+      description: 'Explain line evolution using Git blame & Copilot',
+      detail: 'Shortcut: Ctrl+Alt+H (editor selection)'
+    },
+    {
+      id: 'explain_multi',
+      category: 'HISTORY',
+      label: '$(files) Why Were These Changed? (Multi-File)',
+      description: 'Correlate changes across multiple files selected in Explorer',
+      detail: 'Context shortcut: Right-click files in Explorer -> "Why Were These Changed?"'
+    },
+    {
+      label: 'DEVELOPER TOOLS & SETTINGS',
+      kind: SEPARATOR_KIND
     },
     {
       id: 'enable_auto',
-      category: 'GENERAL',
+      category: 'DEVELOPER_TOOLS',
       label: '$(check) Enable Automatic AI Analysis',
-      description: isAutoAnalysis ? '(Currently Active)' : 'Opt-in to automatic AI explanation on right-click',
+      description: isAutoAnalysis ? '(Currently Active)' : 'Auto-analyze on right-click without prompt',
       detail: 'Sends selected code and Git diffs to Copilot without per-request confirmation'
     },
     {
       id: 'disable_auto',
-      category: 'GENERAL',
+      category: 'DEVELOPER_TOOLS',
       label: '$(circle-slash) Disable Automatic AI Analysis',
-      description: !isAutoAnalysis ? '(Currently Active)' : 'Revert to instant local Git history only',
+      description: !isAutoAnalysis ? '(Currently Active)' : 'Revert to manual AI invocation',
       detail: 'Preserves 100% offline Git history without transmitting repository code'
     },
     {
       id: 'toggle_multi_confirm',
-      category: 'GENERAL',
+      category: 'DEVELOPER_TOOLS',
       label: '$(bell) Multi-File Usage Confirmation',
       description: showMultiFileConfirmation ? 'ACTIVE (Always confirm)' : 'SUPPRESSED (Click to restore)',
-      detail: 'Shows token estimation, model context capacity, and warnings before multi-file analysis'
+      detail: 'Shows token estimation dialog before multi-file operations'
     },
     {
       id: 'list_models',
-      category: 'GENERAL',
+      category: 'DEVELOPER_TOOLS',
       label: '$(hubot) List Available AI Models',
-      description: 'Discover models registered via VS Code Language Model API (vscode.lm)',
-      detail: 'View active Copilot and vendor models supporting chat generation'
+      description: 'Inspect registered VS Code Language Models (vscode.lm)',
+      detail: 'Discover available Copilot and vendor models'
     },
     {
       id: 'import_graph',
-      category: 'GENERAL',
-      label: '$(cloud-upload) Import Git History to Neo4j Evidence Graph',
-      description: 'Ingest local commits, files, and contributors into Neo4j AuraDB',
+      category: 'DEVELOPER_TOOLS',
+      label: '$(cloud-upload) Import Git History to Neo4j',
+      description: 'Ingest local commits, files, and relationships into Neo4j AuraDB',
       detail: 'Creates Repository, Commit, File, and Person nodes with provenance'
     },
     {
       id: 'inspect_graph',
-      category: 'GENERAL',
+      category: 'DEVELOPER_TOOLS',
       label: '$(graph) Inspect Neo4j Evidence Graph',
-      description: 'Query ingested commits, files, and contributor statistics',
+      description: 'Query repository node counts, commit relations, and file stats',
       detail: 'Read-only graph inspection without invoking AI models'
     },
     {
       id: 'retrieve_evidence',
-      category: 'GENERAL',
-      label: '$(history) Retrieve File Evidence from Neo4j',
-      description: 'Query historical commits and change types for active file in Neo4j',
+      category: 'DEVELOPER_TOOLS',
+      label: '$(database) Retrieve File Evidence from Neo4j',
+      description: 'Query historical graph evidence for active file',
       detail: 'Read-only query scoped to current repository'
     },
     {
       id: 'prune_graph',
-      category: 'GENERAL',
+      category: 'DEVELOPER_TOOLS',
       label: '$(trash) Clean Up Repository Subgraph in Neo4j',
       description: "Safely remove this repository's commits and files from Neo4j",
       detail: 'Requires confirmation; never deletes Person nodes or other repositories'
-    },
-    {
-      label: 'DEVELOPER TOOLS',
-      kind: SEPARATOR_KIND
-    },
-    {
-      id: 'inspect_payload',
-      category: 'DEVELOPER_TOOLS',
-      label: '$(eye) Inspect Outgoing AI Payload',
-      description: 'Preview exact outgoing JSON in side editor (redacted, never sent)',
-      detail: 'Inspect code snippet, commit messages, diffs, and prompt structure'
-    },
-    {
-      id: 'view_diagnostics',
-      category: 'DEVELOPER_TOOLS',
-      label: '$(pulse) View Technical Diagnostics',
-      description: 'Review operational telemetry, token metrics, and runtime status',
-      detail: 'Safe diagnostics containing zero credentials, code, or prompts'
-    },
-    {
-      id: 'open_channel',
-      category: 'DEVELOPER_TOOLS',
-      label: '$(output) Open ORIGINX Output Channel',
-      description: 'Focus the dedicated ORIGINX logging & telemetry stream',
-      detail: 'View raw Git log details, startup diagnostics, and model lists'
-    },
-    {
-      id: 'show_env',
-      category: 'DEVELOPER_TOOLS',
-      label: '$(info) Show Extension Version / Environment Information',
-      description: 'Inspect runtime environment, VS Code version, and Copilot compatibility',
-      detail: 'ORIGINX 0.2.0 | Copilot-Native Architecture'
     },
     {
       id: 'manage_neo4j_creds',
@@ -193,6 +169,34 @@ export function getCommandCenterItems(
       label: '$(key) Manage Neo4j Database Credentials',
       description: 'Store, update, or clear Neo4j AuraDB password in SecretStorage',
       detail: 'Never logs passwords or bundles credentials'
+    },
+    {
+      id: 'inspect_payload',
+      category: 'DEVELOPER_TOOLS',
+      label: '$(eye) Inspect Outgoing AI Payload',
+      description: 'Preview sanitized prompt and diff payload in editor',
+      detail: 'Inspect code snippet, commit messages, diffs, and prompt structure'
+    },
+    {
+      id: 'view_diagnostics',
+      category: 'DEVELOPER_TOOLS',
+      label: '$(pulse) Technical Diagnostics',
+      description: 'Review operational telemetry and token metrics',
+      detail: 'Safe diagnostics containing zero credentials, code, or prompts'
+    },
+    {
+      id: 'open_channel',
+      category: 'DEVELOPER_TOOLS',
+      label: '$(output) Open GitWhisper Output Channel',
+      description: 'Focus dedicated GitWhisper logging & telemetry stream',
+      detail: 'View raw Git log details, startup diagnostics, and model lists'
+    },
+    {
+      id: 'show_env',
+      category: 'DEVELOPER_TOOLS',
+      label: '$(info) Environment & Version Info',
+      description: 'GitWhisper 0.3.0 | VS Code host & Node runtime',
+      detail: 'Inspect runtime environment, VS Code version, and Copilot compatibility'
     }
   ];
 }
@@ -314,8 +318,8 @@ export function getEnvironmentSubmenuItems(info?: {
       kind: SEPARATOR_KIND
     },
     {
-      label: '$(package) ORIGINX Version',
-      description: '0.2.0 (Phase 3B — Copilot-Only)',
+      label: '$(package) GitWhisper Version',
+      description: '0.3.0',
       detail: 'Evidence-backed code history explainer for VS Code'
     },
     {
@@ -361,7 +365,7 @@ export async function showCommandCenter(context?: vscode.ExtensionContext): Prom
 
   const selected = (await vs.window.showQuickPick(items, {
     title: 'GitWhisper by ORIGINX — Command Center',
-    placeHolder: 'Select a GitWhisper command or developer tool...',
+    placeHolder: 'Select a command (Analyze Code is the main action)...',
     matchOnDescription: true,
     matchOnDetail: true
   })) as CommandCenterEntry | undefined;

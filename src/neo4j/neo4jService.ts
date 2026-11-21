@@ -82,7 +82,7 @@ export function createNeo4jDriver(config: Neo4jConfig): Driver {
       connectionTimeout: timeout,
       connectionAcquisitionTimeout: timeout,
       maxConnectionLifetime: lifetime,
-      userAgent: 'ORIGINX-VSCode-Extension/0.2.0'
+      userAgent: 'GitWhisper-VSCode-Extension/0.3.0'
     }
   );
 }
