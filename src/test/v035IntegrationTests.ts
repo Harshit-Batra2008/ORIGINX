@@ -321,7 +321,7 @@ export async function runV035IntegrationTests(test: (name: string, fn: () => voi
   await test('v0.3.5 Command Compatibility: Primary and secondary actions match v0.3.1 contracts', () => {
     const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'));
 
-    assert.ok(pkg.version === '0.3.5' || pkg.version === '0.3.6', 'Version must be 0.3.5 or 0.3.6');
+    assert.ok(pkg.version === '0.3.5' || pkg.version === '0.3.6' || pkg.version === '0.3.7', 'Version must be 0.3.5, 0.3.6 or 0.3.7');
     assert.strictEqual(pkg.publisher, 'originx');
 
     const commands = pkg.contributes.commands.map((c: { command: string }) => c.command);

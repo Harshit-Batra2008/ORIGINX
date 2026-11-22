@@ -2,7 +2,7 @@
   "name": "originx-extension",
   "displayName": "GitWhisper by ORIGINX",
   "description": "GitWhisper by ORIGINX helps developers understand and continue unfinished code with Git history, repository decisions, context checkpoints and optional Neo4j evidence.",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "publisher": "originx",
   "license": "MIT",
   "icon": "assets/originx-icon.png",

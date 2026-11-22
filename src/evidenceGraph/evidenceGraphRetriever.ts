@@ -424,9 +424,15 @@ export function computeConfidenceSignals(
 
   const finalScore = Math.min(1.0, Math.round(heuristicScore * 100) / 100);
 
+  // If evidence is insufficient, absence of superseding evidence does NOT imply verified current status
+  const effectiveSupersessionStatus: SupersessionStatus =
+    (evidenceClassification === 'insufficient_evidence' && supersession.status === 'current')
+      ? 'unknown'
+      : supersession.status;
+
   return {
     evidenceClassification,
-    supersessionStatus: supersession.status,
+    supersessionStatus: effectiveSupersessionStatus,
     hasPrEvidence: hasPr,
     hasIssueLink: hasIssue,
     hasDesignDocGrounding: hasDoc,

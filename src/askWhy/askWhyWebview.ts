@@ -133,8 +133,11 @@ export function renderAskWhySidebarHtml(result?: AskWhyResult): string {
 
   // Supersession pill
   let supersessionClass = 'pill-current';
-  let supersessionLabel = 'No Supersession Identified (Current) — no supersession found in inspected evidence';
-  if (result.supersessionStatus === 'explicitly_superseded') {
+  let supersessionLabel = 'No Supersession Identified (Current)';
+  if (result.isRefusalOrInsufficient || result.evidenceClassification === 'insufficient_evidence') {
+    supersessionClass = 'pill-unknown';
+    supersessionLabel = 'Supersession Unverified (No historical rationale found)';
+  } else if (result.supersessionStatus === 'explicitly_superseded') {
     supersessionClass = 'pill-superseded';
     supersessionLabel = 'Explicitly Superseded';
   } else if (result.supersessionStatus === 'potentially_affected') {
@@ -142,7 +145,7 @@ export function renderAskWhySidebarHtml(result?: AskWhyResult): string {
     supersessionLabel = 'Potentially Affected / Needs Review';
   } else if (result.supersessionStatus === 'unknown') {
     supersessionClass = 'pill-unknown';
-    supersessionLabel = 'Supersession Unknown';
+    supersessionLabel = 'Supersession Unverified (Absence of evidence ≠ verified current)';
   }
 
   // Citations: Top 2-3 most relevant for compact sidebar
@@ -266,9 +269,12 @@ export function renderAskWhyFullInvestigationHtml(result: AskWhyResult): string 
     qualityLabel = 'Insufficient Evidence';
   }
 
-  let supersessionLabel = 'No Supersession Identified (Current) — no supersession found in inspected evidence';
+  let supersessionLabel = 'No Supersession Identified (Current)';
   let supersessionClass = 'badge-supported';
-  if (result.supersessionStatus === 'explicitly_superseded') {
+  if (result.isRefusalOrInsufficient || result.evidenceClassification === 'insufficient_evidence') {
+    supersessionClass = 'badge-neutral';
+    supersessionLabel = 'Supersession Unverified (No historical rationale found)';
+  } else if (result.supersessionStatus === 'explicitly_superseded') {
     supersessionClass = 'badge-insufficient';
     supersessionLabel = 'Explicitly Superseded';
   } else if (result.supersessionStatus === 'potentially_affected') {
@@ -276,7 +282,7 @@ export function renderAskWhyFullInvestigationHtml(result: AskWhyResult): string 
     supersessionLabel = 'Potentially Affected / Needs Review';
   } else if (result.supersessionStatus === 'unknown') {
     supersessionClass = 'badge-neutral';
-    supersessionLabel = 'Supersession Unknown';
+    supersessionLabel = 'Supersession Unverified (Absence of evidence ≠ verified current)';
   }
 
   const allCommits = result.citations.filter(c => c.type === 'commit');
