@@ -195,6 +195,9 @@ export function renderAskWhySidebarHtml(result?: AskWhyResult): string {
   ${result.isRefusalOrInsufficient ? `
     <div class="refusal-box">
       <strong>INSUFFICIENT HISTORICAL EVIDENCE:</strong> The recorded commit history, pull requests, and repository documentation do not state the engineering reason for this implementation.
+      <div style="margin-top: 8px;">
+        <button class="btn btn-secondary" onclick="postAction('explainCodeInstead')">Explain Code Instead (Source Semantics)</button>
+      </div>
     </div>
   ` : ''}
 
@@ -222,6 +225,9 @@ export function renderAskWhySidebarHtml(result?: AskWhyResult): string {
 
   <div class="actions-section">
     <button class="btn btn-primary" onclick="postAction('openFullInvestigation')">Open Full Investigation</button>
+    <button class="btn btn-secondary" onclick="postAction('explainRoleAndImpact')">Explain Role &amp; Impact</button>
+    <button class="btn btn-secondary" onclick="postAction('functionEvolution')">Multi-PR Evolution</button>
+    <button class="btn btn-secondary" onclick="postAction('explainCode')">Explain Code</button>
     <button class="btn btn-secondary" onclick="postAction('askNewQuestion')">Ask Another Question</button>
     <button class="btn btn-secondary" onclick="postAction('copyAnswer')">Copy Explanation</button>
     <button class="btn btn-secondary" onclick="postAction('saveDecision')">Save as Decision Memory</button>
@@ -297,6 +303,8 @@ export function renderAskWhyFullInvestigationHtml(result: AskWhyResult): string 
       </div>
     </div>
     <div class="header-actions">
+      <button class="btn btn-secondary" onclick="postAction('explainRoleAndImpact')">Role &amp; Impact</button>
+      <button class="btn btn-secondary" onclick="postAction('functionEvolution')">Multi-PR Evolution</button>
       <button class="btn btn-secondary" onclick="postAction('copyAnswer')">Copy Explanation</button>
       <button class="btn btn-secondary" onclick="postAction('saveDecision')">Save as Decision Memory</button>
       <button class="btn btn-secondary" onclick="postAction('saveCheckpoint')">Save Context Checkpoint</button>
@@ -537,6 +545,14 @@ export class AskWhyWebviewController {
           if (newQ && onAskNewQuestion) {
             await onAskNewQuestion(newQ);
           }
+        } else if (message.command === 'explainRoleAndImpact') {
+          void vsc.commands.executeCommand('originx.explainRoleAndImpact');
+        } else if (message.command === 'functionEvolution') {
+          void vsc.commands.executeCommand('originx.functionEvolution');
+        } else if (message.command === 'explainCode' || message.command === 'explainCodeInstead') {
+          void vsc.commands.executeCommand('originx.explainCode');
+        } else if (message.command === 'auditRequirements') {
+          void vsc.commands.executeCommand('originx.auditRequirements');
         }
       },
       undefined,
@@ -609,6 +625,19 @@ export class GitWhisperSidebarProvider implements vscode.WebviewViewProvider {
           break;
         case 'askNewQuestion':
           void vsc.commands.executeCommand('originx.askWhy');
+          break;
+        case 'explainCodeInstead':
+        case 'explainCode':
+          void vsc.commands.executeCommand('originx.explainCode');
+          break;
+        case 'explainRoleAndImpact':
+          void vsc.commands.executeCommand('originx.explainRoleAndImpact');
+          break;
+        case 'functionEvolution':
+          void vsc.commands.executeCommand('originx.functionEvolution');
+          break;
+        case 'auditRequirements':
+          void vsc.commands.executeCommand('originx.auditRequirements');
           break;
       }
     });

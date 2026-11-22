@@ -87,11 +87,32 @@ export function extractCodeEntities(filePath: string, content: string): Extracte
       if (fnMatch || classMatch || constMatch) {
         const name = fnMatch ? fnMatch[1] : (classMatch ? classMatch[1] : constMatch![1]);
         const kind = classMatch ? 'class' : 'function';
+
+        let endLine = lineNum;
+        let openBraces = 0;
+        let foundOpen = false;
+        for (let j = i; j < lines.length; j++) {
+          const l = lines[j];
+          for (const ch of l) {
+            if (ch === '{') {
+              openBraces++;
+              foundOpen = true;
+            } else if (ch === '}') {
+              openBraces--;
+            }
+          }
+          if (foundOpen && openBraces <= 0) {
+            endLine = j + 1;
+            break;
+          }
+        }
+        if (!foundOpen) endLine = lineNum;
+
         entities.push({
           name,
           kind,
           startLine: lineNum,
-          endLine: lineNum,
+          endLine: Math.max(lineNum, endLine),
           filePath,
         });
       }

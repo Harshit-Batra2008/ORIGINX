@@ -109,6 +109,22 @@
         "title": "GitWhisper: Open Full Investigation"
       },
       {
+        "command": "originx.explainRoleAndImpact",
+        "title": "GitWhisper: Explain Role & Impact"
+      },
+      {
+        "command": "originx.auditRequirements",
+        "title": "GitWhisper: Audit Requirements"
+      },
+      {
+        "command": "originx.explainCode",
+        "title": "GitWhisper: Explain Code"
+      },
+      {
+        "command": "originx.functionEvolution",
+        "title": "GitWhisper: Multi-PR Function Evolution"
+      },
+      {
         "command": "originx.analyzeCode",
         "title": "GitWhisper: Analyze Code"
       },
@@ -277,6 +293,22 @@
         },
         {
           "command": "originx.openFullInvestigation",
+          "when": "false"
+        },
+        {
+          "command": "originx.explainRoleAndImpact",
+          "when": "false"
+        },
+        {
+          "command": "originx.auditRequirements",
+          "when": "false"
+        },
+        {
+          "command": "originx.explainCode",
+          "when": "false"
+        },
+        {
+          "command": "originx.functionEvolution",
           "when": "false"
         }
       ]

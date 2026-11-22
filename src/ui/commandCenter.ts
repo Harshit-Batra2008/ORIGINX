@@ -34,6 +34,26 @@ export function getContinuityItems(hasSourceFile: boolean): Action[] {
       description: 'Ask any question about this code with historical evidence',
       command: 'originx.askWhy'
     });
+    items.push({
+      label: '$(circuit-board) Explain Role & Impact',
+      description: 'Callers, references, blast radius, and test citations',
+      command: 'originx.explainRoleAndImpact'
+    });
+    items.push({
+      label: '$(git-commit) Multi-PR Function Evolution',
+      description: 'Trace origin, fixes, refactors, and supersessions across PRs',
+      command: 'originx.functionEvolution'
+    });
+    items.push({
+      label: '$(code) Explain Code (What & How)',
+      description: 'Source-grounded structural explanation of behavior',
+      command: 'originx.explainCode'
+    });
+    items.push({
+      label: '$(checklist) Audit PRD / Tasks vs Build',
+      description: 'Compare PRD requirements against code and test evidence',
+      command: 'originx.auditRequirements'
+    });
   }
   items.push({
     label: 'Review unfinished changes',

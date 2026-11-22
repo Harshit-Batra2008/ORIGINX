@@ -3,6 +3,7 @@ import { runEvidenceGraphTests } from './evidenceGraphTests';
 import { runAskWhyTests } from './askWhyTests';
 import { runV035IntegrationTests } from './v035IntegrationTests';
 import { runNeo4jGraphRAGTests } from './neo4jGraphRAGTests';
+import { runIntegratedIntelligenceTests } from './integratedIntelligenceTests';
 import * as assert from 'assert';
 import { runDecisionMemoryTests } from './decisionMemoryTests';
 import { runCheckpointTests } from './checkpointTests';
@@ -8075,6 +8076,10 @@ Clean defensive implementation.
     assert.ok(commandIds.includes('originx.resumeContextCheckpoint'), 'originx.resumeContextCheckpoint must be registered');
     assert.ok(commandIds.includes('originx.understandAndContinue'), 'originx.understandAndContinue must be registered');
     assert.ok(commandIds.includes('originx.askWhy'), 'originx.askWhy must be registered');
+    assert.ok(commandIds.includes('originx.explainRoleAndImpact'), 'originx.explainRoleAndImpact must be registered');
+    assert.ok(commandIds.includes('originx.auditRequirements'), 'originx.auditRequirements must be registered');
+    assert.ok(commandIds.includes('originx.explainCode'), 'originx.explainCode must be registered');
+    assert.ok(commandIds.includes('originx.functionEvolution'), 'originx.functionEvolution must be registered');
   });
 
   // Execute Phase 2 Decision Memory Test Suite
@@ -8095,6 +8100,9 @@ Clean defensive implementation.
 
   // Execute Live Neo4j GraphRAG & Code Entity Test Suite
   await runNeo4jGraphRAGTests();
+
+  // Execute Integrated Code Intelligence, Requirements Audit, Evolution & Explain Test Suite
+  await runIntegratedIntelligenceTests(test);
 
   console.log('\n====================================================');
   console.log(`Test Results: ${passed} passed, ${failures} failed`);

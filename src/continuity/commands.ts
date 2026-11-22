@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
@@ -17,6 +18,13 @@ import { getOrCreateDriver, resolveNeo4jConfig } from '../neo4j/neo4jService';
 import { SecretManager } from '../security/secretManager';
 import { showContinuityMenu } from '../ui/commandCenter';
 import { selectRepositoryPath } from '../ui/repositorySelection';
+import { FunctionIntelligenceService } from '../codeIntelligence/functionIntelligenceService';
+import { RoleAndImpactWebviewController } from '../codeIntelligence/roleAndImpactWebview';
+import { RequirementsAuditor } from '../requirementsAudit/requirementsAuditor';
+import { RequirementsAuditWebviewController } from '../requirementsAudit/requirementsAuditWebview';
+import { FunctionEvolutionService } from '../evolution/functionEvolutionService';
+import { FunctionEvolutionWebviewController } from '../evolution/evolutionWebview';
+import { ExplainCodeService } from '../explainCode/explainCodeService';
 
 export interface CapturedEditorContext {
   filePath: string;
@@ -232,6 +240,159 @@ export function registerContinuityCommands(
     await showContinuityMenu(context);
   }
 
+  async function explainRoleAndImpact(): Promise<void> {
+    const captured = captureCurrentEditorContext();
+    if (!captured) {
+      void vscode.window.showWarningMessage('GitWhisper: Open a source file to analyze function role and impact.');
+      return;
+    }
+    await vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: `GitWhisper: Analyzing Function Role & Impact for ${path.basename(captured.filePath)}...`,
+      cancellable: false
+    }, async () => {
+      const service = new FunctionIntelligenceService();
+      const result = await service.analyzeFunctionRoleAndImpact(captured.filePath, captured.startLine);
+      await RoleAndImpactWebviewController.show(context, result);
+    });
+  }
+
+  async function auditRequirements(root: string): Promise<void> {
+    const defaultCandidates = ['PRD.md', 'TASKS.md', 'REQUIREMENTS.md', 'docs/PRD.md', 'docs/architecture.md'];
+    const foundFiles: string[] = [];
+    for (const cand of defaultCandidates) {
+      const fp = path.join(root, cand);
+      if (fs.existsSync(fp)) {
+        foundFiles.push(cand);
+      }
+    }
+
+    const quickPickItems: Array<vscode.QuickPickItem & { action: string; filePath?: string }> = [];
+    for (const f of foundFiles) {
+      quickPickItems.push({
+        label: `$(file) Audit ${f}`,
+        description: `Use workspace requirement document ${f}`,
+        action: 'file',
+        filePath: path.join(root, f)
+      });
+    }
+
+    const activeDoc = vscode.window.activeTextEditor?.document;
+    if (activeDoc && (activeDoc.fileName.endsWith('.md') || activeDoc.fileName.endsWith('.txt'))) {
+      quickPickItems.push({
+        label: '$(edit) Audit Active Editor Content',
+        description: `Audit requirements in ${path.basename(activeDoc.fileName)}`,
+        action: 'active'
+      });
+    }
+
+    quickPickItems.push({
+      label: '$(file-code) Choose Another Document...',
+      description: 'Select any Markdown or text PRD / Tasks file',
+      action: 'browse'
+    });
+
+    quickPickItems.push({
+      label: '$(pencil) Paste Numbered Requirements / Checklist...',
+      description: 'Paste requirement text directly',
+      action: 'paste'
+    });
+
+    const chosen = await vscode.window.showQuickPick(quickPickItems, {
+      title: 'GitWhisper: Select PRD / Requirements Source to Audit',
+      placeHolder: 'Choose a PRD file or paste checklist requirements'
+    });
+
+    if (!chosen) return;
+
+    let contentToAudit = '';
+    if (chosen.action === 'file' && chosen.filePath) {
+      contentToAudit = fs.readFileSync(chosen.filePath, 'utf8');
+    } else if (chosen.action === 'active' && activeDoc) {
+      contentToAudit = activeDoc.getText();
+    } else if (chosen.action === 'browse') {
+      const uris = await vscode.window.showOpenDialog({
+        canSelectFiles: true,
+        canSelectFolders: false,
+        canSelectMany: false,
+        filters: { 'Markdown / Text': ['md', 'txt', 'markdown'] },
+        title: 'Select PRD or TASKS.md file'
+      });
+      if (uris && uris.length > 0) {
+        contentToAudit = fs.readFileSync(uris[0].fsPath, 'utf8');
+      }
+    } else if (chosen.action === 'paste') {
+      const pasted = await vscode.window.showInputBox({
+        title: 'GitWhisper: Paste Numbered Requirements or Checklist',
+        prompt: 'e.g. "1. Scope preservation \\n 2. Neo4j GraphRAG \\n 3. Ask Why citations"',
+        placeHolder: 'Enter requirements...'
+      });
+      if (pasted) contentToAudit = pasted;
+    }
+
+    if (!contentToAudit || !contentToAudit.trim()) return;
+
+    await vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: 'GitWhisper: Auditing Requirements against codebase...',
+      cancellable: false
+    }, async () => {
+      const auditor = new RequirementsAuditor();
+      const parsed = auditor.parseRequirements(contentToAudit);
+      const report = await auditor.auditWorkspace(parsed, root);
+      await RequirementsAuditWebviewController.show(context, report, () => auditRequirements(root));
+    });
+  }
+
+  async function functionEvolution(): Promise<void> {
+    const captured = captureCurrentEditorContext();
+    if (!captured) {
+      void vscode.window.showWarningMessage('GitWhisper: Open a source file to trace function evolution.');
+      return;
+    }
+    await vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification,
+      title: `GitWhisper: Tracing Multi-PR Evolution for ${path.basename(captured.filePath)}...`,
+      cancellable: false
+    }, async () => {
+      const service = new FunctionEvolutionService();
+      const timeline = await service.traceFunctionEvolution(
+        captured.filePath,
+        captured.startLine,
+        captured.endLine
+      );
+      await FunctionEvolutionWebviewController.show(context, timeline);
+    });
+  }
+
+  async function explainCode(): Promise<void> {
+    const captured = captureCurrentEditorContext();
+    if (!captured) {
+      void vscode.window.showWarningMessage('GitWhisper: Open a source file and select code to explain.');
+      return;
+    }
+    const doc = vscode.window.activeTextEditor?.document;
+    const service = new ExplainCodeService();
+    const result = service.explainCode({
+      filePath: captured.filePath,
+      startLine: captured.startLine,
+      endLine: captured.endLine,
+      selectedCode: captured.selectedSnippet,
+      fileContent: doc ? doc.getText() : undefined
+    });
+
+    const choice = await vscode.window.showInformationMessage(
+      `GitWhisper: Explain Code (${path.basename(result.filePath)}:${result.startLine})\n\n${result.syntaxSummary}`,
+      'Ask Why (Historical Rationale)',
+      'Explain Role & Impact'
+    );
+    if (choice === 'Ask Why (Historical Rationale)') {
+      void vscode.commands.executeCommand('originx.askWhy');
+    } else if (choice === 'Explain Role & Impact') {
+      void vscode.commands.executeCommand('originx.explainRoleAndImpact');
+    }
+  }
+
   const openMenu = () => showContinuityMenu(context);
 
   context.subscriptions.push(
@@ -245,6 +406,10 @@ export function registerContinuityCommands(
         void vscode.window.showInformationMessage('GitWhisper: No active investigation yet. Select code and Ask Why first.');
       }
     }),
+    vscode.commands.registerCommand('originx.explainRoleAndImpact', explainRoleAndImpact),
+    vscode.commands.registerCommand('originx.auditRequirements', () => inRepository(auditRequirements)),
+    vscode.commands.registerCommand('originx.explainCode', explainCode),
+    vscode.commands.registerCommand('originx.functionEvolution', functionEvolution),
     vscode.commands.registerCommand('originx.commandCenter', openMenu),
     vscode.commands.registerCommand('originx.discoverDecisions', () => inRepository(discoverDecisions)),
     vscode.commands.registerCommand('originx.manageDecisions', () => inRepository(async root => { await DecisionWebviewController.showStored(context, root); })),
