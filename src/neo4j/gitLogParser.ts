@@ -1,4 +1,6 @@
 import * as path from 'path';
+import { isSourceTarget, normalizePath } from '../git/sourcePaths';
+export { DEFAULT_EXCLUDED_DIRECTORY_SEGMENTS, isExcludedPath, normalizePath } from '../git/sourcePaths';
 import { scanAndSanitize } from '../security/redactor';
 import { redactSecret } from './neo4jEnv';
 import {
@@ -8,68 +10,6 @@ import {
 } from './neo4jGraphTypes';
 
 export const GIT_LOG_FORMAT = 'commit:%H%x00%h%x00%an%x00%ae%x00%aI%x00%s%x00%b%x00END_META';
-
-/**
- * Default directory segments to exclude from Git evidence graph ingestion.
- * Matches directories anywhere in the path, not just at repository root.
- */
-export const DEFAULT_EXCLUDED_DIRECTORY_SEGMENTS: string[] = [
-  'node_modules',
-  'dist',
-  'build',
-  'out',
-  'coverage',
-  '.next',
-  '.venv',
-  '__pycache__',
-  '.git'
-];
-
-/**
- * Normalizes file paths to POSIX format (forward slashes).
- */
-export function normalizePath(filePath: string): string {
-  return filePath.replace(/\\/g, '/').replace(/^\.\//, '');
-}
-
-/**
- * Checks whether a file path contains any excluded directory segments.
- * Match directories anywhere in the path, not just at repository root.
- * Preserves package-lock.json, source files, documentation, and useful configuration files.
- */
-export function isExcludedPath(filePath: string, customSegments?: string[]): boolean {
-  if (!filePath) {
-    return false;
-  }
-  const excluded = new Set(
-    (customSegments && customSegments.length > 0
-      ? customSegments
-      : DEFAULT_EXCLUDED_DIRECTORY_SEGMENTS
-    ).map((s) => s.toLowerCase().trim()).filter(Boolean)
-  );
-
-  const normalized = normalizePath(filePath);
-  const segments = normalized.split('/').filter(Boolean);
-
-  for (let i = 0; i < segments.length; i++) {
-    const isLast = i === segments.length - 1;
-    const seg = segments[i].toLowerCase();
-
-    if (excluded.has(seg)) {
-      // If it's a parent directory segment, it is definitely a directory match
-      if (!isLast) {
-        return true;
-      }
-      // If it's the last segment, only exclude if it has no extension (directory match)
-      // or if it explicitly matches directory syntax
-      if (!path.posix.extname(seg)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
 
 /**
  * Parses raw status line from `git log --name-status`.
@@ -224,7 +164,7 @@ export function parseGitLogToGraph(
       const parsedFile = parseNameStatusLine(fLine, repoId);
       if (parsedFile) {
         // Exclude generated/dependency paths before constructing File nodes
-        if (!isExcludedPath(parsedFile.path, excludedSegments)) {
+        if (isSourceTarget(parsedFile.path, excludedSegments)) {
           files.push(parsedFile);
         }
       }

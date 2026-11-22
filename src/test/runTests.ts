@@ -1,4 +1,11 @@
+import { runMemoryPanelTests } from './memoryPanelTests';
+import { runEvidenceGraphTests } from './evidenceGraphTests';
+import { runAskWhyTests } from './askWhyTests';
+import { runV035IntegrationTests } from './v035IntegrationTests';
+import { runNeo4jGraphRAGTests } from './neo4jGraphRAGTests';
 import * as assert from 'assert';
+import { runDecisionMemoryTests } from './decisionMemoryTests';
+import { runCheckpointTests } from './checkpointTests';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -97,7 +104,8 @@ import {
   VsCodeLmError
 } from '../lm/vscodeLmClient';
 import {
-  getCommandCenterItems,
+  getContinuityItems,
+  getToolItems,
   getDiagnosticsSubmenuItems,
   getEnvironmentSubmenuItems,
   getModelSubmenuItems
@@ -919,69 +927,34 @@ None.
   // ====================================================
   // 11. Phase 3B: ORIGINX Command Center & Submenus Tests
   // ====================================================
-  await test('getCommandCenterItems generates PRIMARY ACTIONS, FOCUSED HISTORY ANALYSIS, and DEVELOPER TOOLS & SETTINGS categories', () => {
-    const items = getCommandCenterItems(false, true);
-
-    // Separators
-    const separators = items.filter((i) => i.kind === -1);
-    assert.strictEqual(separators.length, 3, 'Must have 3 category separators');
-    assert.strictEqual(separators[0].label, 'PRIMARY ACTIONS');
-    assert.strictEqual(separators[1].label, 'FOCUSED HISTORY ANALYSIS');
-    assert.strictEqual(separators[2].label, 'DEVELOPER TOOLS & SETTINGS');
-
-    // Primary items (Main actions)
-    const primaryItems = items.filter((i) => i.category === 'PRIMARY');
-    assert.strictEqual(primaryItems.length, 3, 'Must have 3 PRIMARY items');
-    assert.strictEqual(primaryItems[0].id, 'analyze_code', 'Main action must be Analyze Code');
-    assert.strictEqual(primaryItems[1].id, 'review_working_tree', 'Second action must be Review Working Tree');
-    assert.strictEqual(primaryItems[2].id, 'investigate_bug', 'Third action must be Investigate Bug');
-
-    // History items
-    const historyItems = items.filter((i) => i.category === 'HISTORY');
-    assert.strictEqual(historyItems.length, 2, 'Must have 2 HISTORY items');
-    const historyIds = historyItems.map((i) => i.id);
-    assert.ok(historyIds.includes('explain'));
-    assert.ok(historyIds.includes('explain_multi'));
-
-    // Developer tools & settings items
-    const devItems = items.filter((i) => i.category === 'DEVELOPER_TOOLS');
-    assert.strictEqual(devItems.length, 13, 'Must have 13 DEVELOPER_TOOLS items');
-    const devIds = devItems.map((i) => i.id);
-    assert.ok(devIds.includes('enable_auto'));
-    assert.ok(devIds.includes('disable_auto'));
-    assert.ok(devIds.includes('toggle_multi_confirm'));
-    assert.ok(devIds.includes('list_models'));
-    assert.ok(devIds.includes('import_graph'));
-    assert.ok(devIds.includes('inspect_graph'));
-    assert.ok(devIds.includes('retrieve_evidence'));
-    assert.ok(devIds.includes('prune_graph'));
-    assert.ok(devIds.includes('manage_neo4j_creds'));
-    assert.ok(devIds.includes('inspect_payload'));
-    assert.ok(devIds.includes('view_diagnostics'));
-    assert.ok(devIds.includes('open_channel'));
-    assert.ok(devIds.includes('show_env'));
+  await test('Continuity menu offers handoff actions and scopes analysis to an open source file', () => {
+    const common = [
+      'originx.reviewWorkingTree', 'originx.resumeContextCheckpoint',
+      'originx.saveContextCheckpoint', 'originx.manageDecisions'
+    ];
+    const noFile = getContinuityItems(false);
+    assert.deepStrictEqual(noFile.flatMap(item => item.command || []), common);
+    assert.ok(noFile.some(item => item.page === 'tools'));
+    assert.ok(getContinuityItems(true).some(item => item.command === 'originx.analyzeCode'));
+    const tools = getToolItems(false);
+    for (const command of ['discoverDecisions', 'whyWasThisChanged', 'whyWereTheseChanged', 'investigateBug',
+      'importGitGraph', 'inspectGitGraph', 'retrieveFileEvidence', 'manageNeo4jCredentials', 'pruneGitGraph', 'inspectPayload']) {
+      assert.ok(tools.some(item => item.command === 'originx.' + command), command);
+    }
+    for (const page of ['home', 'models', 'diagnostics', 'output', 'environment']) {
+      assert.ok(tools.some(item => item.page === page), page);
+    }
   });
 
-  await test('getCommandCenterItems dynamically updates active indicator based on isAutoAnalysis flag', () => {
-    const itemsWhenDisabled = getCommandCenterItems(false);
-    const disableItem1 = itemsWhenDisabled.find((i) => i.id === 'disable_auto');
-    const enableItem1 = itemsWhenDisabled.find((i) => i.id === 'enable_auto');
-    assert.ok(disableItem1?.description?.includes('(Currently Active)'));
-    assert.ok(!enableItem1?.description?.includes('(Currently Active)'));
-
-    const itemsWhenEnabled = getCommandCenterItems(true);
-    const disableItem2 = itemsWhenEnabled.find((i) => i.id === 'disable_auto');
-    const enableItem2 = itemsWhenEnabled.find((i) => i.id === 'enable_auto');
-    assert.ok(!disableItem2?.description?.includes('(Currently Active)'));
-    assert.ok(enableItem2?.description?.includes('(Currently Active)'));
-
-    const itemsWithConfirm = getCommandCenterItems(false, true);
-    const confirmItem1 = itemsWithConfirm.find((i) => i.id === 'toggle_multi_confirm');
-    assert.ok(confirmItem1?.description?.includes('ACTIVE (Always confirm)'));
-
-    const itemsWithoutConfirm = getCommandCenterItems(false, false);
-    const confirmItem2 = itemsWithoutConfirm.find((i) => i.id === 'toggle_multi_confirm');
-    assert.ok(confirmItem2?.description?.includes('SUPPRESSED (Click to restore)'));
+  await test('Tools offer the available automatic-analysis action and current confirmation setting', () => {
+    for (const enabled of [true, false]) {
+      const items = getToolItems(enabled, enabled);
+      const automaticActions = items.filter(item => item.command?.endsWith('AutomaticAnalysis'));
+      assert.deepStrictEqual(automaticActions.map(item => item.command), [
+        enabled ? 'originx.disableAutomaticAnalysis' : 'originx.enableAutomaticAnalysis'
+      ]);
+      assert.strictEqual(items.find(item => item.page === 'toggleConfirmation')?.description, enabled ? 'On' : 'Off');
+    }
   });
 
   await test('getModelSubmenuItems includes Back navigation, Separator, and discovered models or warning', () => {
@@ -1002,7 +975,7 @@ None.
   });
 
   await test('getDiagnosticsSubmenuItems includes Back navigation, configuration items, and Output channel link', () => {
-    const items = getDiagnosticsSubmenuItems(true, 'compact');
+    const items = getDiagnosticsSubmenuItems(true, 'compact', true, true);
     assert.strictEqual(items[0].isBack, true, 'First item must be Back button');
     assert.strictEqual(items[1].kind, -1, 'Second item must be Separator');
 
@@ -1018,12 +991,16 @@ None.
     const legacyItem = items.find((i) => i.label.includes('Legacy Gemini Credentials'));
     assert.strictEqual(legacyItem?.description, 'PURGED & VERIFIED');
 
+    const pending = getDiagnosticsSubmenuItems(false, 'compact');
+    assert.ok(pending.some(item => item.description === 'Verification pending'));
+
     const channelItem = items.find((i) => i.openChannel === true);
     assert.ok(channelItem !== undefined, 'Must provide action to open Output Channel');
   });
 
   await test('getEnvironmentSubmenuItems includes Back navigation, version info, and LM API status', () => {
     const items = getEnvironmentSubmenuItems({
+      extensionVersion: '4.2.7',
       vsCodeVersion: '1.92.0',
       nodeVersion: 'v20.11.0',
       platformArch: 'win32 (x64)',
@@ -1034,7 +1011,7 @@ None.
     assert.strictEqual(items[1].kind, -1, 'Second item must be Separator');
 
     const versionItem = items.find((i) => i.label.includes('Version'));
-    assert.ok(versionItem?.description?.includes('0.3.0'));
+    assert.ok(versionItem?.description === '4.2.7');
 
     const hostItem = items.find((i) => i.label.includes('VS Code Host'));
     assert.strictEqual(hostItem?.description, '1.92.0');
@@ -1699,45 +1676,23 @@ The exact ticket or product design requirement was not specified in the commit m
     assert.ok(html.includes('&lt;marquee&gt;'));
   });
 
-  await test('package.json commandPalette exposes ONLY whyWasThisChanged and commandCenter, and has zero Gemini commands or settings', () => {
-    const pkgPath = path.resolve(__dirname, '../../package.json');
-    const pkgContent = fs.readFileSync(pkgPath, 'utf8');
-    const pkg = JSON.parse(pkgContent);
-
-    const hiddenCommands = (pkg.contributes.menus.commandPalette || [])
-      .filter((item: any) => item.when === 'false')
-      .map((item: any) => item.command);
-
-    // Sub-commands must be hidden from Command Palette so only Command Center and Why Was This Changed are exposed
-    const expectedHidden = [
-      'originx.enableAutomaticAnalysis',
-      'originx.disableAutomaticAnalysis',
-      'originx.listVsCodeModels',
-      'originx.inspectPayload'
-    ];
-
-    for (const cmd of expectedHidden) {
-      assert.ok(hiddenCommands.includes(cmd), `Sub-command ${cmd} must have when: "false" in commandPalette`);
-    }
-
-    // Only analyzeCode, whyWasThisChanged, reviewWorkingTree, investigateBug, and commandCenter must be visible in Command Palette
-    const allCommandIds = pkg.contributes.commands.map((c: any) => c.command);
-    const visiblePaletteCommands = allCommandIds.filter((cmd: string) => !hiddenCommands.includes(cmd));
-
-    assert.deepStrictEqual(
-      visiblePaletteCommands.sort(),
-      ['originx.analyzeCode', 'originx.whyWasThisChanged', 'originx.reviewWorkingTree', 'originx.investigateBug', 'originx.commandCenter'].sort(),
-      'Command Palette must expose ONLY primary commands (analyzeCode, whyWasThisChanged, reviewWorkingTree, investigateBug, commandCenter)'
-    );
-
-    // Verify zero legacy Gemini commands exist in package.json
-    const geminiCommands = allCommandIds.filter((cmd: string) => cmd.toLowerCase().includes('gemini'));
-    assert.strictEqual(geminiCommands.length, 0, 'package.json must contain zero Gemini commands');
-
-    // Verify zero legacy Gemini settings exist in configuration
-    const configKeys = Object.keys(pkg.contributes.configuration.properties || {});
-    const geminiSettings = configKeys.filter((k) => k.toLowerCase().includes('gemini') || k.toLowerCase().includes('aiprovider'));
-    assert.strictEqual(geminiSettings.length, 0, 'package.json must contain zero Gemini or aiProvider settings');
+  await test('The Command Palette exposes Understand & Continue and the three supporting actions', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'));
+    const all = pkg.contributes.commands.map((item: { command: string }) => item.command);
+    const hidden = pkg.contributes.menus.commandPalette
+      .filter((item: { when: string }) => item.when === 'false')
+      .map((item: { command: string }) => item.command);
+    const visible = all.filter((id: string) => !hidden.includes(id));
+    assert.deepStrictEqual(visible.sort(), [
+      'originx.manageDecisions', 'originx.resumeContextCheckpoint', 'originx.saveContextCheckpoint', 'originx.understandAndContinue'
+    ]);
+    assert.strictEqual(new Set(all).size, all.length);
+    assert.strictEqual(pkg.publisher + '.' + pkg.name, 'originx.originx-extension');
+    assert.deepStrictEqual(pkg.contributes.menus['editor/context'].map((item: { command: string }) => item.command),
+      ['originx.understandAndContinue']);
+    assert.ok(all.every((id: string) => !id.toLowerCase().includes('gemini')));
+    assert.ok(Object.keys(pkg.contributes.configuration.properties).every(
+      key => !/gemini|aiprovider/i.test(key)));
   });
 
   await test('Brand and Presentation Consistency: GitWhisper by ORIGINX', () => {
@@ -1752,7 +1707,7 @@ The exact ticket or product design requirement was not specified in the commit m
     assert.ok(readme.includes('**GitWhisper** (by team **ORIGINX**)'), 'README must mention team ORIGINX and product GitWhisper');
   });
 
-  await test('package.json contributes.keybindings binds originx.whyWasThisChanged (Ctrl+Alt+H) and originx.analyzeCode (Ctrl+O Ctrl+X) with editorTextFocus && editorHasSelection', () => {
+  await test('Keyboard shortcuts open continuity from the editor and focused history for a selection', () => {
     const pkgPath = path.resolve(__dirname, '../../package.json');
     const pkgContent = fs.readFileSync(pkgPath, 'utf8');
     const pkg = JSON.parse(pkgContent);
@@ -1766,11 +1721,11 @@ The exact ticket or product design requirement was not specified in the commit m
     assert.strictEqual(whyBinding.mac, 'cmd+alt+h', 'Default macOS key must be cmd+alt+h');
     assert.strictEqual(whyBinding.when, 'editorTextFocus && editorHasSelection', 'when clause must require editorTextFocus && editorHasSelection');
 
-    const analyzeBinding = pkg.contributes.keybindings.find((b: any) => b.command === 'originx.analyzeCode');
-    assert.ok(analyzeBinding, 'Must contain originx.analyzeCode');
+    const analyzeBinding = pkg.contributes.keybindings.find((b: any) => b.command === 'originx.understandAndContinue');
+    assert.ok(analyzeBinding, 'Must bind Understand & Continue');
     assert.strictEqual(analyzeBinding.key, 'ctrl+o ctrl+x', 'Chord must be ctrl+o ctrl+x');
     assert.strictEqual(analyzeBinding.mac, 'cmd+o cmd+x', 'macOS chord must be cmd+o cmd+x');
-    assert.strictEqual(analyzeBinding.when, 'editorTextFocus && editorHasSelection', 'when clause must require editorTextFocus && editorHasSelection');
+    assert.strictEqual(analyzeBinding.when, 'editorTextFocus');
   });
 
   // ====================================================
@@ -2828,7 +2783,7 @@ None.`;
 
     const disabledHtml = WebviewView.renderMultiFileHtml(disabledResult);
     assert.ok(disabledHtml.includes('Automatic AI Analysis is Disabled'));
-    assert.ok(disabledHtml.includes('Command Center'));
+    assert.ok(disabledHtml.includes('Understand &amp; Continue'));
 
     const blockedResult: MultiFileHistoryResult = {
       ...disabledResult,
@@ -7481,7 +7436,7 @@ Update the call site to use the namespace \`jwt.validateToken(token)\`.
 
     const prompt = buildUnifiedAnalysisPrompt(bundle);
     assert.ok(prompt.includes('GitWhisper by ORIGINX'), 'Must include GitWhisper branding');
-    assert.ok(prompt.includes('Understand the change. Trace the impact. Fix with context.'), 'Must include product direction');
+    assert.ok(prompt.includes('Code Continuity'), 'Must include product direction');
     assert.ok(prompt.includes('checkAuth(token: string)'), 'Must include code snippet');
     assert.ok(prompt.includes('verify does not exist on type Global'), 'Must include active diagnostic');
     assert.ok(prompt.includes('4455667'), 'Must include Git commit shortHash');
@@ -8061,7 +8016,7 @@ Clean defensive implementation.
     assert.ok(html.includes('Neo4j Author'), 'Must render author from authorName');
     assert.ok(html.includes('2026-11-20 10:00:00'), 'Must render date from committedAt');
     assert.ok(html.includes('def5678'), 'Must render commit shortHash');
-    assert.ok(html.includes('Coupled Companion'), 'Must render coupled companion badge');
+    assert.ok(html.includes('Historical co-change'), 'Must render coupled companion badge');
   });
 
   await test('Finale Unified: WebviewView.renderUnifiedAnalysisHtml never throws and remains non-blank with sparse/undefined inputs', () => {
@@ -8114,7 +8069,32 @@ Clean defensive implementation.
     assert.ok(commandIds.includes('originx.reviewWorkingTree'), 'originx.reviewWorkingTree must remain registered');
     assert.ok(commandIds.includes('originx.investigateBug'), 'originx.investigateBug must remain registered');
     assert.ok(commandIds.includes('originx.commandCenter'), 'originx.commandCenter must remain registered');
+    assert.ok(commandIds.includes('originx.discoverDecisions'), 'originx.discoverDecisions must be registered');
+    assert.ok(commandIds.includes('originx.manageDecisions'), 'originx.manageDecisions must be registered');
+    assert.ok(commandIds.includes('originx.saveContextCheckpoint'), 'originx.saveContextCheckpoint must be registered');
+    assert.ok(commandIds.includes('originx.resumeContextCheckpoint'), 'originx.resumeContextCheckpoint must be registered');
+    assert.ok(commandIds.includes('originx.understandAndContinue'), 'originx.understandAndContinue must be registered');
+    assert.ok(commandIds.includes('originx.askWhy'), 'originx.askWhy must be registered');
   });
+
+  // Execute Phase 2 Decision Memory Test Suite
+  await runDecisionMemoryTests(test);
+
+  // Execute Code Continuity: Context Checkpoint Test Suite
+  await runCheckpointTests(test);
+  await runMemoryPanelTests(test);
+
+  // Execute Historical Evidence Graph Test Suite
+  await runEvidenceGraphTests(test);
+
+  // Execute Flagship Ask Why Test Suite
+  await runAskWhyTests(test);
+
+  // Execute v0.3.5 Integration & Legacy UI Preservation Test Suite
+  await runV035IntegrationTests(test);
+
+  // Execute Live Neo4j GraphRAG & Code Entity Test Suite
+  await runNeo4jGraphRAGTests();
 
   console.log('\n====================================================');
   console.log(`Test Results: ${passed} passed, ${failures} failed`);

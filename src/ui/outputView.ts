@@ -148,7 +148,7 @@ export class OutputView {
       channel.appendLine('');
     } else if (result.explanationStatus === 'disabled') {
       channel.appendLine('NOTE: Automatic AI analysis is disabled (default).');
-      channel.appendLine('Run command "ORIGINX: Command Center" or "ORIGINX: Enable Automatic AI Analysis" to enable AI explanations.');
+      channel.appendLine('Open GitWhisper: Understand & Continue, then History, graph and settings to enable automatic AI analysis.');
       channel.appendLine('Inspect outgoing data anytime via "ORIGINX: Inspect Outgoing AI Payload".');
       channel.appendLine(subSeparator);
       channel.appendLine('');

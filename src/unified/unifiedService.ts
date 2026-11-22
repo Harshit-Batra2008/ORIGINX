@@ -1,11 +1,13 @@
 import * as path from 'path';
 import { getHistoryForSelection, runGit } from '../git/gitService';
-import { GitHistoryResult, SelectionContext } from '../git/gitTypes';
+import { getGitCoChanges } from '../git/coChanges';
+import { isSourceTarget } from '../git/sourcePaths';
+import { listWorkingTreeEntries } from '../git/workingTreeStatus';
+import { SelectionContext } from '../git/gitTypes';
 import { collectDiagnosticsForDocument } from '../investigation/investigationService';
 import { retrieveCoChangedFiles, retrieveFileEvidence } from '../neo4j/neo4jEvidenceRetriever';
-import { Neo4jCommitEvidence } from '../neo4j/neo4jGraphTypes';
-import { aggregateCoChangeEvidence } from '../reviewer/reviewerService';
-import { RelatedFileRecommendation, ReviewerCoChangeGroup } from '../reviewer/reviewerTypes';
+import { Neo4jCoChangeItem, Neo4jCommitEvidence } from '../neo4j/neo4jGraphTypes';
+import { aggregateCoChangeEvidence } from '../impact/coChangeImpact';
 import {
   UnifiedAnalysisRequest,
   UnifiedEvidenceBundle
@@ -92,7 +94,7 @@ export async function gatherUnifiedEvidence(
   let neo4jStatus: 'ok' | 'offline' | 'no_records' | 'disabled' | 'error' = 'disabled';
   let neo4jError: string | undefined = undefined;
   let neo4jFileEvidence: Neo4jCommitEvidence[] | undefined = undefined;
-  let neo4jCoChanges: RelatedFileRecommendation[] = [];
+  let companions: Neo4jCoChangeItem[] = [];
 
   if (options?.neo4jDriver) {
     try {
@@ -105,28 +107,8 @@ export async function gatherUnifiedEvidence(
       // Historically co-changed files (blast radius)
       const coRes = await retrieveCoChangedFiles(options.neo4jDriver, request.repoId, relativePath, 10);
       if (coRes.status === 'ok') {
-        if (coRes.coChangedFiles.length > 0) {
-          const group: ReviewerCoChangeGroup = {
-            targetFilePath: relativePath,
-            targetFileName: request.fileName,
-            coChangedFiles: coRes.coChangedFiles
-          };
-          neo4jCoChanges = aggregateCoChangeEvidence(
-            [
-              {
-                filePath: relativePath,
-                fileName: request.fileName,
-                status: isWorkingTreeModified ? 'unstaged' : 'unstaged',
-                diff: workingTreeDiff || '',
-                diffCharCount: workingTreeDiff?.length || 0,
-                isBinary: false,
-                isUntracked: false
-              }
-            ],
-            [group]
-          );
-        }
-        neo4jStatus = (neo4jFileEvidence && neo4jFileEvidence.length > 0) || neo4jCoChanges.length > 0
+        companions = coRes.coChangedFiles.filter(item => isSourceTarget(item.filePath));
+        neo4jStatus = (neo4jFileEvidence && neo4jFileEvidence.length > 0) || companions.length > 0
           ? 'ok'
           : 'no_records';
       } else {
@@ -139,6 +121,26 @@ export async function gatherUnifiedEvidence(
     }
   }
 
+  const useLocalGit = companions.length === 0 && isSourceTarget(relativePath) &&
+    !options?.cancellationToken?.isCancellationRequested;
+  const gitOptions = { cancellationToken: options?.cancellationToken };
+  if (useLocalGit) {
+    const rows = await getGitCoChanges(request.repoRoot, [relativePath], 8, gitOptions);
+    companions = rows.map(row => ({
+      filePath: row.filePath,
+      fileName: path.basename(row.filePath),
+      sharedCommitCount: row.sharedCommitCount,
+      sharedCommits: row.commits,
+      commitHashes: row.commits.map(commit => commit.shortHash)
+    }));
+  }
+  const workingTree = companions.length ? await listWorkingTreeEntries(request.repoRoot, gitOptions) : [];
+  const recommendations = aggregateCoChangeEvidence(workingTree, [{
+    targetFilePath: relativePath,
+    targetFileName: request.fileName,
+    coChangedFiles: companions
+  }]);
+
   return {
     request,
     diagnostics,
@@ -146,7 +148,8 @@ export async function gatherUnifiedEvidence(
     workingTreeDiff,
     isWorkingTreeModified,
     neo4jFileEvidence,
-    neo4jCoChanges,
+    neo4jCoChanges: useLocalGit ? [] : recommendations,
+    localGitCoChanges: useLocalGit ? recommendations : undefined,
     neo4jStatus,
     neo4jError
   };

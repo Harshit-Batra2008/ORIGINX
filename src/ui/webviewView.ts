@@ -1806,7 +1806,7 @@ export class WebviewView {
             Local Git evidence is accessible in the Commits and Diffs tabs.
           </div>
           <div style="font-size: 11px; color: var(--subtle); margin-top: 6px;">
-            Run <code>ORIGINX: Import Git History to Neo4j Knowledge Graph</code> from the Command Center to ingest repository provenance.
+            Run <code>ORIGINX: Import Git History to Neo4j Knowledge Graph</code> under <strong>Understand &amp; Continue → History, graph and settings</strong> to index repository history.
           </div>
         </div>
       `;
@@ -2663,7 +2663,7 @@ export class WebviewView {
         <div class="banner banner-info" style="border-left: 3px solid var(--subtle);">
           <strong>Automatic AI Analysis is Disabled (Default)</strong>
           <div style="font-size: 12px; margin-top: 4px;">
-            ORIGINX gathered local Git evidence for ${result.eligibleFiles.length} file(s). To enable cross-file Copilot AI explanations, open the <strong>Command Center</strong> (<code>Ctrl+Shift+P</code> -&gt; <code>ORIGINX: Command Center</code>) and select <strong>Enable Automatic AI Analysis</strong>.
+            ORIGINX gathered local Git evidence for ${result.eligibleFiles.length} file(s). To enable cross-file Copilot AI explanations, open <strong>Understand &amp; Continue → History, graph and settings</strong> and select <strong>Enable automatic AI analysis</strong>.
           </div>
         </div>`;
     }
@@ -3336,7 +3336,7 @@ export class WebviewView {
       <div class="review-subcard">
         <div class="subcard-title">Local Git Review Mode</div>
         <p>Automatic AI analysis is disabled by default. GitWhisper has collected local working tree diffs and historical Neo4j co-change context without network transmission.</p>
-        <p style="margin-top: 8px; color: var(--subtle);">To generate AI-powered review summaries with GitHub Copilot, enable Automatic AI Analysis in the ORIGINX Command Center.</p>
+        <p style="margin-top: 8px; color: var(--subtle);">To generate AI-powered review summaries with GitHub Copilot, open <strong>Understand &amp; Continue → History, graph and settings</strong> and enable automatic AI analysis.</p>
       </div>
       ${unModifiedCompanions.length > 0 ? `
         <div class="review-subcard" style="border-left: 3px solid #d29922;">
@@ -4019,7 +4019,9 @@ export class WebviewView {
     const exp = result?.explanation;
     const diagList = result?.evidence?.diagnostics || [];
     const commits = result?.evidence?.gitHistory?.commits || [];
-    const coChanges = result?.evidence?.neo4jCoChanges || [];
+    const localCoChanges = result?.evidence?.localGitCoChanges;
+    const coChanges = localCoChanges ?? result?.evidence?.neo4jCoChanges ?? [];
+    const source = localCoChanges !== undefined ? 'Local Git' : 'Neo4j';
     const neo4jCommits = result?.evidence?.neo4jFileEvidence || [];
     const isWorkingTreeMod = result?.evidence?.isWorkingTreeModified || false;
 
@@ -4137,12 +4139,12 @@ export class WebviewView {
     }
 
     // Co-change companion cards
-    let coChangeHtml = '<p class="subtle-text">No Neo4j co-change companion files found for this file (Neo4j may be offline or no shared commits recorded).</p>';
+    let coChangeHtml = '<p class="subtle-text">No historical co-changes were retrieved for this file.</p>';
     if (Array.isArray(coChanges) && coChanges.length > 0) {
       coChangeHtml = `<div class="cochange-list">${coChanges.map((co: any) => {
         const changedTag = co?.isCurrentlyChanged
           ? '<span class="badge badge-warning">Currently Modified</span>'
-          : '<span class="badge badge-provider-vscode">Coupled Companion</span>';
+          : '<span class="badge badge-provider-vscode">Historical co-change</span>';
         const sampleHashes = Array.isArray(co?.sampleCommitHashes) ? co.sampleCommitHashes : [];
         const hashes = sampleHashes.length > 0
           ? `<div class="cochange-hashes"><span class="meta-label">Supporting Commits:</span> ${sampleHashes.slice(0, 4).map((h: any) => `<span class="hash-pill">${this.escapeHtml(h)}</span>`).join(' ')}</div>`
@@ -4159,7 +4161,7 @@ export class WebviewView {
               ${changedTag}
               <span class="badge badge-meta" style="margin-left: auto;">${this.escapeHtml(String(count))} shared commit(s)</span>
             </div>
-            <div class="cochange-meta">Historically coupled with: <strong>${this.escapeHtml(coupledWith)}</strong></div>
+            <div class="cochange-meta">Changed together with <strong>${this.escapeHtml(coupledWith)}</strong></div>
             ${hashes}
           </div>`;
       }).join('')}</div>`;
@@ -4513,8 +4515,8 @@ export class WebviewView {
       <span class="metric-value">${commits.length} commit(s)</span>
     </div>
     <div class="metric-card">
-      <span class="metric-label">Neo4j Co-Changes</span>
-      <span class="metric-value">${coChanges.length} coupled file(s)</span>
+      <span class="metric-label">Historical co-changes</span>
+      <span class="metric-value">${coChanges.length} related file(s)</span>
     </div>
   </div>
 
@@ -4614,7 +4616,7 @@ export class WebviewView {
   <!-- TAB 4: Related Files & Impact -->
   <div id="tab-related" class="tab-panel">
     <div class="section-card">
-      <div class="section-title">Neo4j Co-Changed Companion Files (${coChanges.length})</div>
+      <div class="section-title">${source} Co-Changed Companion Files (${coChanges.length})</div>
       ${coChangeHtml}
     </div>
 

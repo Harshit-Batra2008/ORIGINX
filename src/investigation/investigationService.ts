@@ -169,17 +169,7 @@ export async function assembleInvestigationEvidence(
             coChangedFiles: coRes.coChangedFiles
           };
           coChangeEvidence = aggregateCoChangeEvidence(
-            [
-              {
-                filePath: relativePath,
-                fileName: request.fileName,
-                status: 'unstaged',
-                diff: '',
-                diffCharCount: 0,
-                isBinary: false,
-                isUntracked: false
-              }
-            ],
+            [{ filePath: relativePath }],
             [group]
           );
           neo4jStatus = 'ok';

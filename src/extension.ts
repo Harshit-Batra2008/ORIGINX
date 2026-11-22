@@ -26,16 +26,17 @@ import { ReviewerExplainer } from './reviewer/reviewerExplainer';
 import { aggregateCoChangeEvidence, gatherWorkingTreeChanges } from './reviewer/reviewerService';
 import { ReviewerCoChangeGroup, ReviewerExplanation, ReviewerResult } from './reviewer/reviewerTypes';
 import { InvestigationExplainer } from './investigation/investigationExplainer';
-import { assembleInvestigationEvidence, collectDiagnosticsForDocument } from './investigation/investigationService';
+import { assembleInvestigationEvidence } from './investigation/investigationService';
 import { InvestigationExplanation, InvestigationRequest, InvestigationResult } from './investigation/investigationTypes';
 import { UnifiedExplainer } from './unified/unifiedExplainer';
 import { gatherUnifiedEvidence } from './unified/unifiedService';
 import { UnifiedAnalysisRequest, UnifiedAnalysisResult } from './unified/unifiedTypes';
 import { migrateAndPurgeLegacySecrets, SecretManager } from './security/secretManager';
-import { showCommandCenter } from './ui/commandCenter';
+import { registerContinuityCommands } from './continuity/commands';
+import { GitWhisperSidebarProvider } from './askWhy';
+import { selectRepositoryPath } from './ui/repositorySelection';
 import { OutputView } from './ui/outputView';
 import { WebviewView } from './ui/webviewView';
-
 export function activate(context: vscode.ExtensionContext) {
   try {
     const startupTime = new Date().toISOString();
@@ -65,13 +66,12 @@ export function activate(context: vscode.ExtensionContext) {
 
     const explainer = new GeminiExplainer();
 
-    // Command: ORIGINX: Command Center (Centralized action hub)
-    const commandCenterDisposable = vscode.commands.registerCommand(
-      'originx.commandCenter',
-      async () => {
-        await showCommandCenter(context);
-      }
+    const sidebarProvider = new GitWhisperSidebarProvider(context);
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider(GitWhisperSidebarProvider.viewType, sidebarProvider)
     );
+
+    registerContinuityCommands(context, sidebarProvider);
 
     // Command: ORIGINX: List Available AI Models (vscode.lm discovery)
     const listVsCodeModelsDisposable = vscode.commands.registerCommand(
@@ -836,9 +836,9 @@ export function activate(context: vscode.ExtensionContext) {
 
               const diagCount = evidenceBundle.diagnostics.length;
               const commitCount = evidenceBundle.gitHistory?.commits?.length || 0;
-              const coCount = evidenceBundle.neo4jCoChanges.length;
+              const coCount = (evidenceBundle.localGitCoChanges ?? evidenceBundle.neo4jCoChanges).length;
               vscode.window.setStatusBarMessage(
-                `GitWhisper: Analyzed ${fileName} (${commitCount} commit(s), ${diagCount} diagnostic(s), ${coCount} Neo4j companion(s))`,
+                `GitWhisper: Analyzed ${fileName} (${commitCount} commit(s), ${diagCount} diagnostic(s), ${coCount} historically co-changed file(s))`,
                 4000
               );
             }
@@ -856,13 +856,7 @@ export function activate(context: vscode.ExtensionContext) {
       async (clickedUri?: vscode.Uri) => {
         try {
           const startTime = Date.now();
-          let targetPath: string | undefined = clickedUri?.fsPath;
-          if (!targetPath && vscode.window.activeTextEditor?.document.uri.scheme === 'file') {
-            targetPath = vscode.window.activeTextEditor.document.uri.fsPath;
-          }
-          if (!targetPath && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-            targetPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
-          }
+          const targetPath = await selectRepositoryPath(clickedUri);
 
           if (!targetPath) {
             vscode.window.showWarningMessage('GitWhisper: Please open a workspace folder or file to review working tree changes.');
@@ -1269,13 +1263,7 @@ export function activate(context: vscode.ExtensionContext) {
       'originx.importGitGraph',
       async (clickedUri?: vscode.Uri) => {
         try {
-          let targetPath: string | undefined = clickedUri?.fsPath;
-          if (!targetPath && vscode.window.activeTextEditor?.document.uri.scheme === 'file') {
-            targetPath = vscode.window.activeTextEditor.document.uri.fsPath;
-          }
-          if (!targetPath && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-            targetPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
-          }
+          const targetPath = await selectRepositoryPath(clickedUri);
 
           if (!targetPath) {
             vscode.window.showWarningMessage('ORIGINX: Please open a workspace or file to import Git history.');
@@ -1303,8 +1291,7 @@ export function activate(context: vscode.ExtensionContext) {
           const choice = await vscode.window.showInformationMessage(
             `Import Git history for "${repoInfo.name}" into Neo4j AuraDB?\n\nTarget: ${config.uri}\nUser: ${config.username}\nScope: Up to ${maxCommits} commits, changed files, and contributors.\n(Code diffs and secrets are strictly excluded).`,
             { modal: true },
-            'Proceed with Import',
-            'Cancel'
+            'Proceed with Import'
           );
 
           if (choice !== 'Proceed with Import') {
@@ -1450,13 +1437,7 @@ export function activate(context: vscode.ExtensionContext) {
       'originx.pruneGitGraph',
       async (clickedUri?: vscode.Uri) => {
         try {
-          let targetPath: string | undefined = clickedUri?.fsPath;
-          if (!targetPath && vscode.window.activeTextEditor?.document.uri.scheme === 'file') {
-            targetPath = vscode.window.activeTextEditor.document.uri.fsPath;
-          }
-          if (!targetPath && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-            targetPath = vscode.workspace.workspaceFolders[0].uri.fsPath;
-          }
+          const targetPath = await selectRepositoryPath(clickedUri);
 
           if (!targetPath) {
             vscode.window.showWarningMessage('ORIGINX: Please open a workspace or file to clean up repository graph.');
@@ -1701,7 +1682,6 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
       analyzeCodeDisposable,
-      commandCenterDisposable,
       reviewWorkingTreeDisposable,
       investigateBugDisposable,
       listVsCodeModelsDisposable,

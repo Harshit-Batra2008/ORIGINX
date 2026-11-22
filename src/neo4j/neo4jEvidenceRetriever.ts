@@ -1,6 +1,7 @@
 import * as path from 'path';
 import { Driver } from 'neo4j-driver';
-import { normalizePath } from './gitLogParser';
+import { isSourceTarget, normalizePath } from '../git/sourcePaths';
+import { openGraphSession } from './neo4jService';
 import { redactSecret } from './neo4jEnv';
 import {
   FileChangeType,
@@ -55,7 +56,7 @@ export async function retrieveFileEvidence(
   const numericLimit = isNaN(parsedLimit) ? DEFAULT_EVIDENCE_LIMIT : parsedLimit;
   const safeLimit = Math.max(1, Math.min(numericLimit, 100));
 
-  const session: INeo4jSession = driver.session();
+  const session: INeo4jSession = openGraphSession(driver);
 
   try {
     const evidenceQuery = `
@@ -184,14 +185,16 @@ export async function retrieveFileEvidence(
 export async function retrieveCoChangedFiles(
   driver: Driver | INeo4jDriver,
   repoId: string,
-  filePath: string,
+  filePath: string | string[],
   limit: number = DEFAULT_CO_CHANGE_LIMIT,
   options?: Neo4jCoChangeOptions
 ): Promise<Neo4jCoChangeResult> {
   const startTime = Date.now();
 
   const trimmedRepoId = (repoId || '').trim();
-  const trimmedFilePath = (filePath || '').trim();
+  const requestedPaths = Array.isArray(filePath) ? filePath : [filePath];
+  const targetPaths = [...new Set(requestedPaths.map(p => normalizePath((p || '').trim())).filter(p => isSourceTarget(p)))];
+  const trimmedFilePath = targetPaths[0] || '';
 
   if (!trimmedRepoId || !trimmedFilePath) {
     return {
@@ -218,17 +221,19 @@ export async function retrieveCoChangedFiles(
   const numericMaxCommits = isNaN(parsedMaxCommits) ? DEFAULT_SHARED_COMMITS_LIMIT : parsedMaxCommits;
   const safeMaxSharedCommits = Math.max(1, Math.min(numericMaxCommits, 50));
 
-  const session: INeo4jSession = driver.session();
+  const session: INeo4jSession = openGraphSession(driver, options?.database);
 
   try {
     const coChangeQuery = `
       MATCH (r:Repository { id: $repoId })-[:HAS_COMMIT]->(c:Commit)-[:MODIFIED]->(target:File)
       WHERE c.repoId = $repoId
         AND target.repoId = $repoId
-        AND (target.path = $filePath OR target.id = $fileId)
+        AND (target.path = $filePath OR target.id = $fileId OR target.path IN $targetPaths)
       MATCH (c)-[:MODIFIED]->(coFile:File)
       WHERE coFile.repoId = $repoId
         AND coFile.path <> target.path
+        AND NOT coFile.path IN $targetPaths
+        AND none(segment IN split(toLower(coFile.path), '/') WHERE segment IN ['.git', '.gitwhisper'])
       WITH DISTINCT coFile, c
       ORDER BY c.committedAt DESC
       WITH coFile,
@@ -254,6 +259,7 @@ export async function retrieveCoChangedFiles(
       repoId: trimmedRepoId,
       filePath: normalizedPath,
       fileId: compositeFileId,
+      targetPaths,
       limit: safeLimit,
       maxSharedCommits: safeMaxSharedCommits
     });
@@ -275,7 +281,7 @@ export async function retrieveCoChangedFiles(
         };
 
         const filePathVal = getStr('filePath');
-        if (!filePathVal) continue;
+        if (!isSourceTarget(filePathVal) || targetPaths.includes(filePathVal)) continue;
 
         let fileNameVal = getStr('fileName');
         if (!fileNameVal) {

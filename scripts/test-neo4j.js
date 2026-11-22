@@ -13,43 +13,10 @@
  */
 
 const path = require('path');
-const fs = require('fs');
+const { loadEnvFile, redactSecret } = require('../out/neo4j/neo4jEnv');
+const neo4jService = require('../out/neo4j/neo4jService');
 
-// 1. Load local .env from workspace root if present
-try {
-  const { loadEnvFile } = require('../out/neo4j/neo4jEnv');
-  loadEnvFile(path.resolve(__dirname, '..'));
-} catch {
-  // If compiled module isn't loaded yet, try simple inline .env parse
-  const envPath = path.resolve(__dirname, '..', '.env');
-  if (fs.existsSync(envPath)) {
-    const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
-    for (const rawLine of lines) {
-      const line = rawLine.trim();
-      if (!line || line.startsWith('#')) continue;
-      const eqIdx = line.indexOf('=');
-      if (eqIdx !== -1) {
-        const key = line.slice(0, eqIdx).trim();
-        let val = line.slice(eqIdx + 1).trim();
-        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-          val = val.slice(1, -1);
-        }
-        if (key && process.env[key] === undefined) {
-          process.env[key] = val;
-        }
-      }
-    }
-  }
-}
-
-// 2. Import Neo4j service from compiled out/
-let neo4jService;
-try {
-  neo4jService = require('../out/neo4j/neo4jService');
-} catch (loadErr) {
-  console.error('Error: ORIGINX compiled output not found. Please run "npm run compile" first.');
-  process.exit(1);
-}
+loadEnvFile(path.resolve(__dirname, '..'));
 
 async function main() {
   const config = neo4jService.resolveNeo4jConfig();
@@ -92,7 +59,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  const sanitized = err instanceof Error ? err.message : String(err);
+  const sanitized = redactSecret(err instanceof Error ? err.message : String(err));
   console.log('Status     : Failed (Unhandled Exception)');
   console.log(`Error      : ${sanitized}`);
   console.log('====================================================');

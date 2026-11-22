@@ -22,3 +22,12 @@ originx-*.jpg
 brain/**
 scratch/**
 website/**
+
+# Local handoffs, development docs and release artifacts
+**/.gitwhisper/**
+.gitwhisper/**
+**/.env*
+*.vsix
+docs/**
+dist/**
+assets/originx-icon-512.png

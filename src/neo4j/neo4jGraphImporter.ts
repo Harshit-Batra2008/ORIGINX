@@ -1,8 +1,11 @@
 import * as path from 'path';
+import { createHash } from 'crypto';
+import { realpathSync } from 'fs';
 import { Driver } from 'neo4j-driver';
 import { GitExecOptions, ICancellationTokenLike, runGit } from '../git/gitService';
 import { GIT_LOG_FORMAT, parseGitLogToGraph } from './gitLogParser';
 import { redactSecret } from './neo4jEnv';
+import { openGraphSession } from './neo4jService';
 import {
   GitGraphCommit,
   GitGraphRepoInfo,
@@ -23,32 +26,31 @@ export async function resolveRepositoryIdentity(
   repoRoot: string,
   options?: GitExecOptions
 ): Promise<GitGraphRepoInfo> {
-  let remoteUrl: string | undefined = undefined;
-  let repoName = path.basename(repoRoot);
-
-  try {
-    const remoteRes = await runGit(['remote', 'get-url', 'origin'], repoRoot, options);
-    if (remoteRes.exitCode === 0 && remoteRes.stdout.trim().length > 0) {
-      remoteUrl = remoteRes.stdout.trim();
-      // Extract owner/repo from git/https URLs if possible
-      const match = remoteUrl.match(/[:/]([^/:]+\/[^/:]+?)(?:\.git)?$/);
-      if (match && match[1]) {
-        repoName = match[1];
+  const rootPath = path.resolve(repoRoot);
+  const remote = await runGit(['remote', 'get-url', 'origin'], rootPath, options);
+  if (remote.exitCode === 0) {
+    const raw = remote.stdout.trim();
+    const scp = !raw.includes('://') && /^(?:[^@/]+@)?([^/:\s]+):(.+)$/.exec(raw);
+    try {
+      const url = new URL(scp && scp[1].length > 1 ? 'ssh://' + scp[1] + '/' + scp[2] : raw);
+      const name = url.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '');
+      if (url.host && name && ['https:', 'http:', 'ssh:', 'git:'].includes(url.protocol)) {
+        return {
+          id: url.host === 'github.com' ? name : url.host + '/' + name,
+          name, rootPath, remoteUrl: url.protocol + '//' + url.host + url.pathname
+        };
       }
+    } catch {
+      // File remotes and local paths use the local repository identity below.
     }
-  } catch {
-    // Remote detection is non-fatal
   }
 
-  // Sanitize repoId for consistent cross-system namespace
-  const sanitizedId = repoName.replace(/[^a-zA-Z0-9._/-]/g, '_');
-
-  return {
-    id: sanitizedId,
-    name: repoName,
-    rootPath: path.normalize(repoRoot),
-    remoteUrl
-  };
+  const common = await runGit(['rev-parse', '--git-common-dir'], rootPath, options);
+  const gitDir = common.exitCode === 0 ? path.resolve(rootPath, common.stdout.trim()) : rootPath;
+  const canonical = realpathSync.native(gitDir);
+  const location = process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+  const fingerprint = createHash('sha256').update(location).digest('hex').slice(0, 24);
+  return { id: 'local/' + fingerprint, name: path.basename(rootPath), rootPath };
 }
 
 /**
@@ -127,7 +129,7 @@ export async function importGitGraph(
   let fileChangesProcessed = 0;
 
   // 1. Ensure Schema
-  const schemaSession = driver.session();
+  const schemaSession = openGraphSession(driver);
   try {
     await ensureGraphSchema(schemaSession);
   } finally {
@@ -135,7 +137,7 @@ export async function importGitGraph(
   }
 
   // 2. Ingest Commits and Metadata in Batches
-  const writeSession = driver.session();
+  const writeSession = openGraphSession(driver);
   try {
     if (options?.cancellationToken?.isCancellationRequested) {
       return {
@@ -383,7 +385,7 @@ export async function estimateRepositoryPruneCounts(
   driver: Driver | INeo4jDriver,
   repoId: string
 ): Promise<RepositoryPruneEstimate> {
-  const session = driver.session();
+  const session = openGraphSession(driver);
   try {
     const query = `
       MATCH (r:Repository { id: $repoId })
@@ -470,7 +472,7 @@ export async function pruneRepositorySubgraph(
     };
   }
 
-  const session = driver.session();
+  const session = openGraphSession(driver);
   try {
     const txRunner = typeof session.executeWrite === 'function'
       ? (work: (tx: { run(q: string, p?: any): Promise<any> }) => Promise<any>) => session.executeWrite!(work)

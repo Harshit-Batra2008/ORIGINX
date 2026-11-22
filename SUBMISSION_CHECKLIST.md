@@ -1,8 +1,7 @@
 # GitWhisper by ORIGINX — Hackathon Submission Checklist
 
-> **hackFront India 2026**  
 > **Problem Statement PS T1.1: “Why The Code Is Like This”**  
-> **Submission Deadline: October 31, 2026**
+> **Release Version: v0.3.6 (Developer Preview / Submission)**
 
 ---
 
@@ -10,9 +9,9 @@
 
 | Deliverable | File Path | Size | Description |
 |---|---|---|---|
-| **VSIX Package** | `originx-extension-0.2.0.vsix` | **2.57 MB** | Self-contained, installable VS Code extension containing bundled runtime dependencies (`neo4j-driver`) ready for judges. |
-| **Source ZIP** | `originx-submission-source.zip` | **0.14 MB** | Clean source code bundle containing all TypeScript sources, scripts, and build configs (excludes `node_modules`, `.git`, `.env`). |
-| **Documentation** | `README.md` | **14 KB** | Comprehensive technical documentation, architecture diagram, setup instructions, and demo guide. |
+| **VSIX Package** | `originx-extension-0.3.6.vsix` | **~3.76 MB** | Self-contained, installable VS Code extension containing bundled runtime dependencies (`neo4j-driver`) ready for review. |
+| **Documentation** | `README.md` | **~5 KB** | Comprehensive technical documentation, architecture diagram, setup instructions, and demo guide. |
+| **Architecture** | `docs/architecture.md` | **~3 KB** | Technical subsystem and maintenance documentation. |
 | **License** | `LICENSE` | **1.05 KB** | Standard MIT License. |
 
 ---
@@ -20,20 +19,21 @@
 ## 2. Pre-Flight Verification Status
 
 - [x] **TypeScript Compilation**: Clean build with `tsc -p ./` (0 errors).
-- [x] **Automated Test Suite**: **165 passed, 0 failed** (`npm test`).
+- [x] **Automated Test Suite**: **297 passed, 0 failed** (`npm test`).
   - Git line history & porcelain blame parsing: PASSED
   - Secret sanitization & credential redactors: PASSED
-  - Prompt injection defenses & hallucinated hash detection: PASSED
+  - Prompt injection defenses & anti-hallucination rules: PASSED
   - Copilot language model client (`vscode.lm`) integration & streaming: PASSED
   - Multi-file validation, cross-file reasoning & token estimation: PASSED
   - Neo4j Knowledge Graph schema, ingestion & evidence retrieval: PASSED
-  - Evidence-count canonical hash deduplication: PASSED
+  - Historical evidence graph retriever & GraphRAG: PASSED
+  - Evidence-based supersession rules (no false supersessions): PASSED
+  - Decision Memory & Context Checkpoints: PASSED
+  - Flagship Ask Why sidebar & full investigation: PASSED
 - [x] **VSIX Packaging**: Validated via `@vscode/vsce package` (all manifests, licenses, and runtime assets valid).
-- [x] **Source Archive Bounds**: Under 50 MB requirement (0.14 MB actual).
 - [x] **Security & Privacy**:
   - No credentials, API keys, or live passwords in repository or archives.
-  - Neo4j passwords stored exclusively in encrypted VS Code `SecretStorage`.
-  - Legacy unencrypted Gemini API keys purged automatically on activation.
+  - Neo4j passwords stored exclusively in encrypted VS Code `SecretStorage` or local git-ignored `.env`.
   - Outgoing AI payloads sanitized against private keys, AWS tokens, and PATs.
 
 ---

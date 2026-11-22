@@ -15,12 +15,11 @@ function getVsCode(): any {
  * Asks for explicit user consent before storing credentials in SecretStorage.
  * Returns null if the user cancels the prompt.
  */
-export async function getOrPromptNeo4jCredentials(
-  secretManager: SecretManager,
+export async function getConfiguredNeo4jCredentials(
+  secretManager: Pick<SecretManager, 'getNeo4jPassword'>,
   configOverrides?: Partial<Neo4jConfig>
 ): Promise<Neo4jConfig | null> {
   const config = resolveNeo4jConfig(configOverrides);
-  const vscode = getVsCode();
 
   // 1. Check process.env.NEO4J_PASSWORD first
   if (config.password && config.password.trim().length > 0) {
@@ -33,7 +32,17 @@ export async function getOrPromptNeo4jCredentials(
     config.password = storedPassword.trim();
     return config;
   }
+  return null;
+}
 
+export async function getOrPromptNeo4jCredentials(
+  secretManager: SecretManager,
+  configOverrides?: Partial<Neo4jConfig>
+): Promise<Neo4jConfig | null> {
+  const config = resolveNeo4jConfig(configOverrides);
+  const configured = await getConfiguredNeo4jCredentials(secretManager, config);
+  if (configured) return configured;
+  const vscode = getVsCode();
   // 3. Prompt user via VS Code masked input box
   if (!vscode || !vscode.window) {
     return null;

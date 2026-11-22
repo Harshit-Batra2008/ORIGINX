@@ -16,17 +16,6 @@ export interface GeminiExplanation {
   chronologicalEvolution?: string;
 }
 
-export interface ExplanationPayloadPreview {
-  fileName: string;
-  startLine: number;
-  endLine: number;
-  selectedCodeSnippet: string;
-  commits: { hash: string; shortHash: string; subject: string; author: string }[];
-  diffLineCount: number;
-  destination: string;
-  model: string;
-}
-
 export interface InspectionPayload {
   aiProvider: string;
   model: string;
@@ -36,20 +25,7 @@ export interface InspectionPayload {
   targetFile: string;
   targetLines: string;
   securityStatus: string;
-  endpoint?: string;
-  method?: string;
-  headers?: Record<string, string>;
   outgoingMessages?: Array<{ role: string; content: string }>;
-  requestBody?: {
-    contents: Array<{
-      role: string;
-      parts: Array<{ text: string }>;
-    }>;
-    generationConfig?: {
-      temperature: number;
-      maxOutputTokens: number;
-    };
-  };
   notes?: string;
 }
 
@@ -90,43 +66,6 @@ export type RequestStage =
   | 'completed'
   | 'timeout';
 
-export interface GenerationConfigDiagnostics {
-  temperature?: number;
-  maxOutputTokens?: number;
-  thinkingConfig?: string;
-  omitted?: boolean;
-}
-
-export interface TransportMetadata {
-  endpoint: string;
-  method: string;
-  headerNames: string[];
-  transport: string;
-  sameAsDiagnosticProbe: boolean;
-}
-
-export interface RequestComparisonItem {
-  id: 'A' | 'B' | 'C' | 'D';
-  name: string;
-  promptType: 'literal' | 'synthetic';
-  hasGenerationConfig: boolean;
-  status: 'SUCCESS' | 'FAILED' | 'SKIPPED';
-  category: ErrorCategory | 'SKIPPED';
-  httpStatus?: number;
-  durationMs: number;
-  requestSizeBytes: number;
-  responseSizeBytes?: number;
-  details: string;
-}
-
-export interface RequestComparisonResult {
-  model: string;
-  timestamp: string;
-  items: RequestComparisonItem[];
-  stoppedEarly: boolean;
-  stopReason?: string;
-}
-
 /**
  * Safe diagnostic telemetry containing zero credentials, headers, code, prompts, or diffs.
  */
@@ -145,6 +84,4 @@ export interface RequestDiagnostics {
   diffCharacterCount?: number;
   attemptCount?: number;
   provider?: 'vscode' | 'gemini';
-  generationConfig?: GenerationConfigDiagnostics;
-  transportMeta?: TransportMetadata;
 }

@@ -108,6 +108,8 @@ function main() {
   // 2. Collect assets
   fileMap.push(...collectFiles(path.join(rootDir, 'assets'), 'assets'));
 
+  fileMap.push(...collectFiles(path.join(rootDir, 'docs'), 'docs'));
+
   // 3. Collect scripts
   fileMap.push(...collectFiles(path.join(rootDir, 'scripts'), 'scripts'));
 
@@ -118,7 +120,6 @@ function main() {
     'tsconfig.json',
     'README.md',
     'LICENSE',
-    'SUBMISSION_CHECKLIST.md',
     '.vscodeignore',
     '.gitignore',
     '.env.example'

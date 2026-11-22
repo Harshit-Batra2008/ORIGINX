@@ -178,6 +178,7 @@ export interface Neo4jCoChangeResult {
 }
 
 export interface Neo4jCoChangeOptions {
+  database?: string;
   limit?: number;
   maxSharedCommitsPerFile?: number;
 }

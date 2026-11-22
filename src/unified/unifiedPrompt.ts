@@ -19,7 +19,7 @@ export function buildUnifiedAnalysisPrompt(
   const req = evidence.request;
   const history = evidence.gitHistory;
   const diagnostics = evidence.diagnostics;
-  const coChanges = evidence.neo4jCoChanges;
+  const coChanges = evidence.localGitCoChanges ?? evidence.neo4jCoChanges;
   const neo4jCommits = evidence.neo4jFileEvidence;
 
   const maxChars = options?.maxInputTokens
@@ -77,20 +77,17 @@ export function buildUnifiedAnalysisPrompt(
         neo4jCommits.slice(0, 5).map((c: any) => `• ${c.shortHash}: ${c.subject} (${c.authorName || c.author || 'Unknown'}, ${c.committedAt || c.date || 'Unknown'}) [Change: ${c.changeType}]`).join('\n')
       : 'No historical graph commits found in Neo4j for this file.';
 
-    const coChangesText = coChanges && coChanges.length > 0
-      ? `Historically Co-Changed Files (Blast Radius):\n` +
-        coChanges.slice(0, 6).map(co => {
-          const coupling = co.isCurrentlyChanged ? ' [CURRENTLY MODIFIED]' : ' [UNTOUCHED COMPANION]';
-          const hashes = co.sampleCommitHashes.length > 0 ? ` (Commits: ${co.sampleCommitHashes.slice(0, 3).join(', ')})` : '';
-          return `• ${co.filePath}${coupling}: ${co.sharedCommitCount} shared commit(s)${hashes}`;
-        }).join('\n')
-      : 'No historical co-changes recorded in Neo4j.';
-
-    neo4jSection = `${graphCommitsText}\n\n${coChangesText}`;
+    neo4jSection = graphCommitsText;
   }
+  const coChangeSource = evidence.localGitCoChanges !== undefined ? 'local Git' : 'Neo4j';
+  const coChangesText = coChanges.length ? coChanges.slice(0, 6).map(co => {
+    const status = co.isCurrentlyChanged ? '[CURRENTLY MODIFIED]' : '[NO WORKING TREE CHANGE REPORTED]';
+    const hashes = co.sampleCommitHashes.slice(0, 3).join(', ');
+    return `• ${co.filePath} ${status}: ${co.sharedCommitCount} shared commit(s)${hashes ? ' (' + hashes + ')' : ''}`;
+  }).join('\n') : 'No historical co-changes retrieved.';
 
   const basePrompt = `You are GitWhisper by ORIGINX — a unified, evidence-grounded code intelligence system.
-Product Direction: "Understand the change. Trace the impact. Fix with context."
+Product direction: Code Continuity. Help a developer understand and continue unfinished work.
 
 Analyze the selected code and produce a single comprehensive, high-signal report combining:
 1) Code functionality (What it does)
@@ -106,6 +103,7 @@ CRITICAL RULES:
 - NO FABRICATED BUGS: If there are NO active diagnostics and the user has not reported an error, explicitly state that no diagnostics or bugs were detected. Do NOT invent phantom bugs.
 - UNVERIFIED SUGGESTED FIX: Any fix or improvement you propose is an ADVISORY SUGGESTION and MUST be labeled with [UNVERIFIED - SUGGESTED FIX]. You are an advisory tool, not an autonomous agent.
 - DISTINGUISH FACTS FROM HYPOTHESES: Clearly separate observed facts from AI reasoning.
+- Historical co-changes establish shared commits. A dependency or predicted failure needs independent evidence in the supplied code or diagnostics.
 
 === TARGET CODE SELECTION ===
 Repository: ${req.repoName} (${req.repoId})
@@ -128,6 +126,9 @@ ${gitHistorySection}
 === NEO4J KNOWLEDGE GRAPH EVIDENCE ===
 ${neo4jSection}
 
+=== HISTORICALLY CO-CHANGED FILES (${coChangeSource}) ===
+${coChangesText}
+
 === REQUIRED RESPONSE FORMAT ===
 You must respond using EXACTLY these 7 Markdown section headers:
 
@@ -141,7 +142,7 @@ You must respond using EXACTLY these 7 Markdown section headers:
 (Discuss active compiler/linter diagnostics. If there are NO issues detected, explicitly state: "No compiler diagnostics or reported bugs detected for this selection.")
 
 ## 4. RELATED FILES & IMPACT ANALYSIS
-(List companion files from Neo4j co-changes or dependencies that may be affected by changes to this code, with specific impact reasoning.)
+(List companions with the supporting shared commits. Label possible effects as hypotheses and cite code evidence for any direct dependency.)
 
 ## 5. SUGGESTIONS & FIXES
 (If an issue exists or a clean defensive improvement is justified, provide a minimal patch labeled [UNVERIFIED - SUGGESTED FIX] and explanation. If code is already clean, state: "No code changes required.")

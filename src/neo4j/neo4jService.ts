@@ -8,6 +8,11 @@ export const DEFAULT_CONNECTION_TIMEOUT_MS = 8000;
 export const DEFAULT_MAX_CONNECTION_LIFETIME_MS = 60000;
 
 let activeDriver: INeo4jDriver | Driver | null = null;
+const driverDatabases = new WeakMap<INeo4jDriver, string>();
+
+export function openGraphSession(driver: INeo4jDriver, database = driverDatabases.get(driver)): INeo4jSession {
+  return database ? driver.session({ database }) : driver.session();
+}
 
 function getVsCode(): any {
   try {
@@ -43,9 +48,9 @@ export function resolveNeo4jConfig(overrides?: Partial<Neo4jConfig>): Neo4jConfi
       ? process.env.NEO4J_DATABASE
       : undefined;
 
-  const uri = overrides?.uri || configuredUri || envUri || DEFAULT_NEO4J_URI;
+  const uri = overrides?.uri || envUri || configuredUri || DEFAULT_NEO4J_URI;
   const username =
-    overrides?.username || configuredUsername || envUsername || DEFAULT_NEO4J_USERNAME;
+    overrides?.username || envUsername || configuredUsername || DEFAULT_NEO4J_USERNAME;
   const password = overrides?.password || envPassword;
   const database = overrides?.database || configuredDatabase || envDatabase || undefined;
   const connectionTimeoutMs =
@@ -75,16 +80,18 @@ export function createNeo4jDriver(config: Neo4jConfig): Driver {
   const timeout = config.connectionTimeoutMs || DEFAULT_CONNECTION_TIMEOUT_MS;
   const lifetime = config.maxConnectionLifetimeMs || DEFAULT_MAX_CONNECTION_LIFETIME_MS;
 
-  return neo4j.driver(
+  const driver = neo4j.driver(
     config.uri,
     neo4j.auth.basic(config.username, config.password),
     {
       connectionTimeout: timeout,
       connectionAcquisitionTimeout: timeout,
       maxConnectionLifetime: lifetime,
-      userAgent: 'GitWhisper-VSCode-Extension/0.3.0'
+      userAgent: 'GitWhisper-VSCode-Extension'
     }
   );
+  if (config.database) driverDatabases.set(driver, config.database);
+  return driver;
 }
 
 /**

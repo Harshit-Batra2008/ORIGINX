@@ -54,6 +54,7 @@ export interface UnifiedEvidenceBundle {
   isWorkingTreeModified: boolean;
   neo4jFileEvidence?: Neo4jCommitEvidence[];
   neo4jCoChanges: RelatedFileRecommendation[];
+  localGitCoChanges?: RelatedFileRecommendation[];
   neo4jStatus: 'ok' | 'offline' | 'no_records' | 'disabled' | 'error';
   neo4jError?: string;
 }

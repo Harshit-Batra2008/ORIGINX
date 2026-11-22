@@ -1,8 +1,8 @@
 {
   "name": "originx-extension",
   "displayName": "GitWhisper by ORIGINX",
-  "description": "Understand why code changed with GitWhisper by ORIGINX — evidence-grounded code history explanations combining local Git line evolution, Neo4j knowledge graph provenance, and GitHub Copilot.",
-  "version": "0.3.1",
+  "description": "GitWhisper by ORIGINX helps developers understand and continue unfinished code with Git history, repository decisions, context checkpoints and optional Neo4j evidence.",
+  "version": "0.3.6",
   "publisher": "originx",
   "license": "MIT",
   "icon": "assets/originx-icon.png",
@@ -19,6 +19,24 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gitwhisper",
+          "title": "GitWhisper",
+          "icon": "assets/gitwhisper-activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "gitwhisper": [
+        {
+          "type": "webview",
+          "id": "originx.askWhySidebar",
+          "name": "Why The Code Is Like This"
+        }
+      ]
+    },
     "configuration": {
       "title": "ORIGINX",
       "properties": {
@@ -70,13 +88,26 @@
             ".next",
             ".venv",
             "__pycache__",
-            ".git"
+            ".git",
+            ".gitwhisper"
           ],
           "description": "Directory names to exclude from Neo4j evidence graph ingestion anywhere in the path (e.g. node_modules, dist, build, coverage)."
         }
       }
     },
     "commands": [
+      {
+        "command": "originx.understandAndContinue",
+        "title": "GitWhisper: Understand & Continue"
+      },
+      {
+        "command": "originx.askWhy",
+        "title": "GitWhisper: Ask Why (Why The Code Is Like This)"
+      },
+      {
+        "command": "originx.openFullInvestigation",
+        "title": "GitWhisper: Open Full Investigation"
+      },
       {
         "command": "originx.analyzeCode",
         "title": "GitWhisper: Analyze Code"
@@ -136,35 +167,37 @@
       {
         "command": "originx.manageNeo4jCredentials",
         "title": "ORIGINX: Manage Neo4j Database Credentials"
+      },
+      {
+        "command": "originx.discoverDecisions",
+        "title": "GitWhisper: Discover Historical Decisions"
+      },
+      {
+        "command": "originx.manageDecisions",
+        "title": "GitWhisper: View Historical Decisions"
+      },
+      {
+        "command": "originx.saveContextCheckpoint",
+        "title": "GitWhisper: Save Context"
+      },
+      {
+        "command": "originx.resumeContextCheckpoint",
+        "title": "GitWhisper: Resume Context"
       }
     ],
     "menus": {
       "editor/context": [
         {
-          "command": "originx.analyzeCode",
-          "when": "editorTextFocus",
+          "command": "originx.understandAndContinue",
+          "when": "editorTextFocus && resourceScheme == file",
           "group": "originx_group@0"
-        },
-        {
-          "command": "originx.reviewWorkingTree",
-          "when": "editorTextFocus",
-          "group": "originx_group@1"
-        },
-        {
-          "command": "originx.investigateBug",
-          "when": "editorTextFocus",
-          "group": "originx_group@2"
-        },
-        {
-          "command": "originx.whyWasThisChanged",
-          "when": "editorTextFocus",
-          "group": "originx_group@3"
         }
       ],
       "explorer/context": [
         {
           "command": "originx.whyWereTheseChanged",
-          "group": "originx_group@1"
+          "group": "originx_group@1",
+          "when": "resourceScheme == file && !explorerResourceIsFolder"
         }
       ],
       "scm/title": [
@@ -174,6 +207,26 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "originx.analyzeCode",
+          "when": "false"
+        },
+        {
+          "command": "originx.reviewWorkingTree",
+          "when": "false"
+        },
+        {
+          "command": "originx.investigateBug",
+          "when": "false"
+        },
+        {
+          "command": "originx.commandCenter",
+          "when": "false"
+        },
+        {
+          "command": "originx.whyWasThisChanged",
+          "when": "false"
+        },
         {
           "command": "originx.whyWereTheseChanged",
           "when": "false"
@@ -213,6 +266,18 @@
         {
           "command": "originx.manageNeo4jCredentials",
           "when": "false"
+        },
+        {
+          "command": "originx.discoverDecisions",
+          "when": "false"
+        },
+        {
+          "command": "originx.askWhy",
+          "when": "false"
+        },
+        {
+          "command": "originx.openFullInvestigation",
+          "when": "false"
         }
       ]
     },
@@ -224,10 +289,10 @@
         "when": "editorTextFocus && editorHasSelection"
       },
       {
-        "command": "originx.analyzeCode",
+        "command": "originx.understandAndContinue",
         "key": "ctrl+o ctrl+x",
         "mac": "cmd+o cmd+x",
-        "when": "editorTextFocus && editorHasSelection"
+        "when": "editorTextFocus"
       }
     ]
   },

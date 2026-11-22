@@ -1,5 +1,6 @@
 import { Driver } from 'neo4j-driver';
 import { redactSecret } from './neo4jEnv';
+import { openGraphSession } from './neo4jService';
 import {
   GlobalDatabaseMetrics,
   GraphInspectionSummary,
@@ -17,7 +18,7 @@ export async function inspectGraphEvidence(
   repoId?: string
 ): Promise<GraphInspectionSummary> {
   const startTime = Date.now();
-  const session: INeo4jSession = driver.session();
+  const session: INeo4jSession = openGraphSession(driver);
 
   try {
     const toNum = (val: any) => {
