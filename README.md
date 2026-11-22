@@ -44,7 +44,7 @@ To run from source, open the checkout in VS Code, choose **Run ORIGINX Extension
 npx --yes @vscode/vsce@4.1.1 package --out ../gitwhisper-code-intelligence-02ae045.vsix
 ```
 
-In VS Code’s Extensions view, open **… → Install from VSIX…** and select the file you just built. The older local archive named `originx-extension-0.3.6.vsix` has none of the four new commands in its manifest.
+In VS Code’s Extensions view, open **… → Install from VSIX…** and select the file you just built. Two packages can share the filename `originx-extension-0.3.6.vsix`. To identify the new build, open the VSIX as a ZIP and look in `extension/package.json` for `originx.explainRoleAndImpact`, `originx.auditRequirements`, `originx.functionEvolution` and `originx.explainCode`. A fresh package from this source contains all four commands and `extension/out/extension.js`.
 
 At `02ae045`, `npm test` compiled the extension and reported **304 passed, 0 failed**. Seven tests cover the new services. Opening the installed extension and following its citations is a separate check. [New service tests](src/test/integratedIntelligenceTests.ts)
 
